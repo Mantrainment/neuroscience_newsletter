@@ -76,7 +76,7 @@ CATEGORIES = {
     }
 }
 
-MAX_PAPERS_PER_CATEGORY = 8
+MAX_PAPERS_PER_CATEGORY = 16
 
 
 # ============== DATA SOURCES ==============
@@ -267,25 +267,25 @@ def collect_papers():
         for query in config["queries"]:
             print(f"  Query: {query[:50]}...")
             
-            for paper in search_pubmed(query, 3):
+            for paper in search_pubmed(query, 5):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
                     papers.append(paper)
                     seen_titles.add(title_lower)
             
-            for paper in search_arxiv(query, 2):
+            for paper in search_arxiv(query, 4):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
                     papers.append(paper)
                     seen_titles.add(title_lower)
             
-            for paper in search_biorxiv(query, 2):
+            for paper in search_biorxiv(query, 3):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
                     papers.append(paper)
                     seen_titles.add(title_lower)
             
-            for paper in search_google_scholar(query, 2):
+            for paper in search_google_scholar(query, 3):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
                     papers.append(paper)
@@ -313,10 +313,11 @@ def format_newsletter(newsletter):
             h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
             h2 {{ color: #2980b9; margin-top: 35px; padding: 10px; background: #ecf0f1; border-radius: 5px; }}
             .section-desc {{ color: #7f8c8d; font-size: 13px; margin-top: -5px; margin-bottom: 15px; }}
-            .paper {{ margin: 12px 0; padding: 12px 15px; background: #fafafa; border-left: 3px solid #3498db; border-radius: 3px; }}
-            .paper a {{ color: #2c3e50; text-decoration: none; font-weight: 500; }}
-            .paper a:hover {{ color: #3498db; }}
-            .source {{ color: #95a5a6; font-size: 11px; display: block; margin-top: 4px; }}
+            .paper {{ margin: 15px 0; padding: 15px 18px; background: linear-gradient(to right, #f8f9fa, #ffffff); border-left: 4px solid #3498db; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }}
+            .paper:hover {{ background: linear-gradient(to right, #eef2f7, #ffffff); }}
+            .paper a {{ color: #2c3e50; text-decoration: none; font-weight: 600; font-size: 15px; line-height: 1.4; display: block; }}
+            .paper a:hover {{ color: #2980b9; }}
+            .source {{ color: #7f8c8d; font-size: 12px; display: inline-block; margin-top: 8px; background: #ecf0f1; padding: 3px 10px; border-radius: 12px; }}
             .empty {{ color: #bdc3c7; font-style: italic; padding: 15px; }}
             .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1; color: #95a5a6; font-size: 11px; }}
         </style>
@@ -332,13 +333,15 @@ def format_newsletter(newsletter):
     
     for category, data in newsletter.items():
         icon = icons.get(category, "📄")
-        html += f'<h2>{icon} {category}</h2>'
+        count = len(data["papers"])
+        html += f'<h2>{icon} {category} <span style="font-size:14px; color:#95a5a6; font-weight:normal;">({count} papers)</span></h2>'
         html += f'<p class="section-desc">{data["description"]}</p>'
         
         if data["papers"]:
-            for paper in data["papers"]:
+            for i, paper in enumerate(data["papers"], 1):
                 html += f"""
                 <div class="paper">
+                    <span style="color:#3498db; font-weight:bold; margin-right:8px;">{i}.</span>
                     <a href="{paper['url']}" target="_blank">{paper['title']}</a>
                     <span class="source">📎 {paper['source']}</span>
                 </div>
