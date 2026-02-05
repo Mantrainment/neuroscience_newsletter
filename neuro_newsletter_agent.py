@@ -1,6 +1,6 @@
 """
 Neuroscience Weekly Newsletter Agent
-Scrapes PubMed, arXiv, and bioRxiv for recent papers and sends email digest.
+Scrapes PubMed, arXiv, bioRxiv, and Google Scholar for recent papers.
 """
 
 import requests
@@ -13,106 +13,152 @@ import sys
 from xml.etree import ElementTree as ET
 
 # ============== CONFIGURATION ==============
-# Uses environment variables (for GitHub Actions) or fallback values
 EMAIL_CONFIG = {
     "sender": os.getenv("EMAIL_SENDER", "your_email@libero.it"),
     "password": os.getenv("EMAIL_PASSWORD", "your_password"),
     "recipient": os.getenv("EMAIL_RECIPIENT", "your_email@libero.it"),
     "smtp_server": "smtp.libero.it",
     "smtp_port": 465,
-    "use_ssl": True  # Libero uses SSL on port 465
+    "use_ssl": True
 }
 
-# Search queries for each category
+# Target journals for PubMed filtering
+TARGET_JOURNALS = [
+    "Lancet", "Lancet Neurol", "Nature", "Nat Neurosci", "Nat Rev Neurosci",
+    "Nat Med", "Nat Methods", "Neuron", "Cell", "Brain", "Neuroimage",
+    "Hum Brain Mapp", "JAMA Neurol", "Ann Neurol", "Neurology",
+    "Alzheimers Dement", "Headache", "Cephalalgia", "J Headache Pain"
+]
+
+# Refined categories with specific queries
 CATEGORIES = {
-    "Cognitive Neuroscience": [
-        "cognitive neuroscience", "neural correlates cognition", 
-        "brain cognition", "cognitive neuroimaging"
-    ],
-    "Clinical Neuroscience": [
-        "neurological disease management", "neurology guidelines",
-        "clinical neurology", "neurological disorders treatment"
-    ],
-    "Neuroimaging Analysis": [
-        "fMRI analysis", "neuroimaging methods", "brain imaging",
-        "MRI preprocessing", "EEG analysis methods"
-    ],
-    "AI in Neuroscience": [
-        "deep learning neuroscience", "machine learning brain",
-        "neural networks neuroimaging", "AI brain analysis"
-    ]
+    "Clinical Neurology": {
+        "description": "Guidelines & management: migraine, dementias, psychotropic drugs",
+        "queries": [
+            # Migraine & Headache
+            "(migraine OR headache OR cephalalgia) AND (guideline OR management OR treatment protocol)",
+            "(cluster headache OR tension headache) AND (clinical OR therapy)",
+            # Neurodegenerative Dementias
+            "(Alzheimer OR dementia OR frontotemporal OR Lewy body) AND (guideline OR clinical management OR diagnosis criteria)",
+            "(Parkinson disease dementia OR vascular dementia) AND (treatment OR management)",
+            # Psychotropic drugs
+            "(antipsychotic OR antidepressant OR anxiolytic) AND (neurology OR neurological) AND (guideline OR recommendation)",
+        ]
+    },
+    "Cognitive Neuroscience": {
+        "description": "Cognition, neuropsychology & neurodegeneration",
+        "queries": [
+            "(cognitive function OR cognition) AND (neural OR brain) AND (memory OR attention OR executive)",
+            "(neuropsychological assessment OR cognitive testing) AND (dementia OR neurodegeneration)",
+            "(Alzheimer OR frontotemporal OR Parkinson) AND (cognitive decline OR neuropsychological)",
+            "(working memory OR episodic memory) AND (aging OR neurodegeneration)",
+        ]
+    },
+    "AI in Neuroscience": {
+        "description": "Machine learning for cognitive neuroscience",
+        "queries": [
+            "(machine learning OR deep learning) AND (cognitive neuroscience OR neuroimaging)",
+            "(neural network OR transformer) AND (brain OR fMRI OR EEG)",
+            "(artificial intelligence) AND (dementia OR Alzheimer) AND (prediction OR classification)",
+            "(convolutional neural network OR random forest) AND (MRI OR brain imaging)",
+        ]
+    },
+    "Neuroimaging Analysis": {
+        "description": "MRI/PET pipelines & analysis methods",
+        "queries": [
+            "(fMRI analysis OR MRI preprocessing) AND (pipeline OR method OR tutorial)",
+            "(FreeSurfer OR FSL OR SPM OR AFNI OR ANTs) AND (neuroimaging)",
+            "(PET imaging OR PET analysis) AND (brain OR amyloid OR tau)",
+            "(diffusion MRI OR DTI OR tractography) AND (method OR analysis)",
+            "(structural MRI OR volumetric) AND (analysis method OR segmentation)",
+            "(resting state OR functional connectivity) AND (analysis OR preprocessing)",
+        ]
+    }
 }
 
-MAX_PAPERS_PER_CATEGORY = 5
+MAX_PAPERS_PER_CATEGORY = 8
 
 
 # ============== DATA SOURCES ==============
 
-def search_pubmed(query, max_results=5):
-    """Search PubMed for recent papers."""
+def search_pubmed(query, max_results=5, filter_journals=True):
+    """Search PubMed with optional journal filtering."""
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     
-    # Get last 7 days
     end_date = datetime.now()
     start_date = end_date - timedelta(days=7)
     date_range = f"{start_date:%Y/%m/%d}:{end_date:%Y/%m/%d}[pdat]"
     
-    # Search
+    # Add journal filter if requested
+    if filter_journals:
+        journal_filter = " OR ".join([f'"{j}"[ta]' for j in TARGET_JOURNALS])
+        full_query = f"({query}) AND ({journal_filter}) AND {date_range}"
+    else:
+        full_query = f"({query}) AND {date_range}"
+    
     search_url = f"{base_url}/esearch.fcgi"
     params = {
         "db": "pubmed",
-        "term": f"{query} AND {date_range}",
+        "term": full_query,
         "retmax": max_results,
         "sort": "relevance",
         "retmode": "json"
     }
     
     try:
-        resp = requests.get(search_url, params=params, timeout=10)
+        resp = requests.get(search_url, params=params, timeout=15)
         ids = resp.json().get("esearchresult", {}).get("idlist", [])
         
         if not ids:
+            # Retry without journal filter if no results
+            if filter_journals:
+                return search_pubmed(query, max_results, filter_journals=False)
             return []
         
-        # Fetch details
         fetch_url = f"{base_url}/efetch.fcgi"
         fetch_params = {
             "db": "pubmed",
             "id": ",".join(ids),
             "retmode": "xml"
         }
-        resp = requests.get(fetch_url, params=fetch_params, timeout=10)
+        resp = requests.get(fetch_url, params=fetch_params, timeout=15)
         
         papers = []
         root = ET.fromstring(resp.content)
         for article in root.findall(".//PubmedArticle"):
             title_el = article.find(".//ArticleTitle")
             pmid_el = article.find(".//PMID")
+            journal_el = article.find(".//Journal/Title")
             
             if title_el is not None and pmid_el is not None:
+                title_text = "".join(title_el.itertext()) if title_el.text is None else title_el.text
+                journal = journal_el.text if journal_el is not None else "PubMed"
+                
                 papers.append({
-                    "title": title_el.text or "No title",
+                    "title": title_text or "No title",
                     "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid_el.text}/",
-                    "source": "PubMed"
+                    "source": journal[:30]
                 })
         return papers
     except Exception as e:
-        print(f"PubMed error: {e}")
+        print(f"  PubMed error: {e}")
         return []
 
 
 def search_arxiv(query, max_results=5):
-    """Search arXiv for recent papers."""
+    """Search arXiv for neuroscience/ML papers."""
     url = "http://export.arxiv.org/api/query"
+    cats = "(cat:q-bio.NC OR cat:cs.LG OR cat:cs.CV OR cat:stat.ML OR cat:eess.IV)"
+    
     params = {
-        "search_query": f"all:{query} AND (cat:q-bio.NC OR cat:cs.LG)",
+        "search_query": f"all:{query} AND {cats}",
         "max_results": max_results,
         "sortBy": "submittedDate",
         "sortOrder": "descending"
     }
     
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = requests.get(url, params=params, timeout=15)
         root = ET.fromstring(resp.content)
         ns = {"atom": "http://www.w3.org/2005/Atom"}
         
@@ -120,6 +166,12 @@ def search_arxiv(query, max_results=5):
         for entry in root.findall("atom:entry", ns):
             title = entry.find("atom:title", ns)
             link = entry.find("atom:id", ns)
+            published = entry.find("atom:published", ns)
+            
+            if published is not None:
+                pub_date = datetime.fromisoformat(published.text.replace("Z", "+00:00"))
+                if (datetime.now(pub_date.tzinfo) - pub_date).days > 7:
+                    continue
             
             if title is not None and link is not None:
                 papers.append({
@@ -129,36 +181,75 @@ def search_arxiv(query, max_results=5):
                 })
         return papers
     except Exception as e:
-        print(f"arXiv error: {e}")
+        print(f"  arXiv error: {e}")
         return []
 
 
 def search_biorxiv(query, max_results=5):
-    """Search bioRxiv for recent papers."""
+    """Search bioRxiv/medRxiv for preprints."""
     end_date = datetime.now()
     start_date = end_date - timedelta(days=7)
     
-    url = f"https://api.biorxiv.org/details/biorxiv/{start_date:%Y-%m-%d}/{end_date:%Y-%m-%d}/0/50"
+    papers = []
+    
+    for server in ["biorxiv", "medrxiv"]:
+        url = f"https://api.biorxiv.org/details/{server}/{start_date:%Y-%m-%d}/{end_date:%Y-%m-%d}/0/100"
+        
+        try:
+            resp = requests.get(url, timeout=15)
+            data = resp.json()
+            
+            query_terms = query.lower().split(" AND ")[0].replace("(", "").replace(")", "").split(" OR ")
+            
+            for item in data.get("collection", []):
+                title_lower = item.get("title", "").lower()
+                abstract_lower = item.get("abstract", "").lower()
+                
+                if any(term.strip() in title_lower or term.strip() in abstract_lower 
+                       for term in query_terms if len(term.strip()) > 3):
+                    papers.append({
+                        "title": item["title"],
+                        "url": f"https://doi.org/{item['doi']}",
+                        "source": server.capitalize()
+                    })
+                    if len(papers) >= max_results:
+                        return papers
+        except Exception as e:
+            print(f"  {server} error: {e}")
+    
+    return papers
+
+
+def search_google_scholar(query, max_results=3):
+    """Search Google Scholar via SerpAPI (optional - set SERPAPI_KEY)."""
+    api_key = os.getenv("SERPAPI_KEY")
+    if not api_key:
+        return []
+    
+    url = "https://serpapi.com/search"
+    params = {
+        "engine": "google_scholar",
+        "q": query,
+        "api_key": api_key,
+        "num": max_results,
+        "as_ylo": datetime.now().year,
+        "scisbd": 1
+    }
     
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, params=params, timeout=15)
         data = resp.json()
         
         papers = []
-        query_lower = query.lower()
-        for item in data.get("collection", []):
-            if query_lower in item.get("title", "").lower() or \
-               query_lower in item.get("abstract", "").lower():
-                papers.append({
-                    "title": item["title"],
-                    "url": f"https://doi.org/{item['doi']}",
-                    "source": "bioRxiv"
-                })
-                if len(papers) >= max_results:
-                    break
+        for result in data.get("organic_results", []):
+            papers.append({
+                "title": result.get("title", "No title"),
+                "url": result.get("link", ""),
+                "source": "Scholar"
+            })
         return papers
     except Exception as e:
-        print(f"bioRxiv error: {e}")
+        print(f"  Scholar error: {e}")
         return []
 
 
@@ -168,29 +259,43 @@ def collect_papers():
     """Collect papers for all categories."""
     newsletter = {}
     
-    for category, queries in CATEGORIES.items():
-        print(f"Searching: {category}...")
+    for category, config in CATEGORIES.items():
+        print(f"\n📚 {category}...")
         papers = []
         seen_titles = set()
         
-        for query in queries:
-            # Search all sources
-            for paper in search_pubmed(query, 3):
-                if paper["title"] not in seen_titles:
-                    papers.append(paper)
-                    seen_titles.add(paper["title"])
+        for query in config["queries"]:
+            print(f"  Query: {query[:50]}...")
             
-            for paper in search_arxiv(query, 3):
-                if paper["title"] not in seen_titles:
+            for paper in search_pubmed(query, 3):
+                title_lower = paper["title"].lower()
+                if title_lower not in seen_titles:
                     papers.append(paper)
-                    seen_titles.add(paper["title"])
+                    seen_titles.add(title_lower)
+            
+            for paper in search_arxiv(query, 2):
+                title_lower = paper["title"].lower()
+                if title_lower not in seen_titles:
+                    papers.append(paper)
+                    seen_titles.add(title_lower)
             
             for paper in search_biorxiv(query, 2):
-                if paper["title"] not in seen_titles:
+                title_lower = paper["title"].lower()
+                if title_lower not in seen_titles:
                     papers.append(paper)
-                    seen_titles.add(paper["title"])
+                    seen_titles.add(title_lower)
+            
+            for paper in search_google_scholar(query, 2):
+                title_lower = paper["title"].lower()
+                if title_lower not in seen_titles:
+                    papers.append(paper)
+                    seen_titles.add(title_lower)
         
-        newsletter[category] = papers[:MAX_PAPERS_PER_CATEGORY]
+        newsletter[category] = {
+            "description": config["description"],
+            "papers": papers[:MAX_PAPERS_PER_CATEGORY]
+        }
+        print(f"  Found: {len(papers)} papers")
     
     return newsletter
 
@@ -203,37 +308,50 @@ def format_newsletter(newsletter):
     <html>
     <head>
         <style>
-            body {{ font-family: Arial, sans-serif; max-width: 700px; margin: auto; }}
-            h1 {{ color: #2c3e50; border-bottom: 2px solid #3498db; }}
-            h2 {{ color: #3498db; margin-top: 30px; }}
-            .paper {{ margin: 15px 0; padding: 10px; background: #f8f9fa; border-radius: 5px; }}
-            .paper a {{ color: #2980b9; text-decoration: none; font-weight: bold; }}
-            .source {{ color: #7f8c8d; font-size: 12px; }}
+            body {{ font-family: 'Segoe UI', Arial, sans-serif; max-width: 750px; margin: auto; padding: 20px; background: #f5f5f5; }}
+            .container {{ background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }}
+            h1 {{ color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px; }}
+            h2 {{ color: #2980b9; margin-top: 35px; padding: 10px; background: #ecf0f1; border-radius: 5px; }}
+            .section-desc {{ color: #7f8c8d; font-size: 13px; margin-top: -5px; margin-bottom: 15px; }}
+            .paper {{ margin: 12px 0; padding: 12px 15px; background: #fafafa; border-left: 3px solid #3498db; border-radius: 3px; }}
+            .paper a {{ color: #2c3e50; text-decoration: none; font-weight: 500; }}
+            .paper a:hover {{ color: #3498db; }}
+            .source {{ color: #95a5a6; font-size: 11px; display: block; margin-top: 4px; }}
+            .empty {{ color: #bdc3c7; font-style: italic; padding: 15px; }}
+            .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1; color: #95a5a6; font-size: 11px; }}
         </style>
     </head>
     <body>
+        <div class="container">
         <h1>🧠 Neuroscience Weekly</h1>
-        <p><em>{date_str}</em></p>
+        <p style="color: #7f8c8d;"><em>{date_str}</em></p>
     """
     
-    for category, papers in newsletter.items():
-        html += f"<h2>{category}</h2>"
-        if papers:
-            for paper in papers:
+    icons = {"Clinical Neurology": "🏥", "Cognitive Neuroscience": "🧩", 
+             "AI in Neuroscience": "🤖", "Neuroimaging Analysis": "🔬"}
+    
+    for category, data in newsletter.items():
+        icon = icons.get(category, "📄")
+        html += f'<h2>{icon} {category}</h2>'
+        html += f'<p class="section-desc">{data["description"]}</p>'
+        
+        if data["papers"]:
+            for paper in data["papers"]:
                 html += f"""
                 <div class="paper">
-                    <a href="{paper['url']}">{paper['title']}</a>
-                    <span class="source"> [{paper['source']}]</span>
+                    <a href="{paper['url']}" target="_blank">{paper['title']}</a>
+                    <span class="source">📎 {paper['source']}</span>
                 </div>
                 """
         else:
-            html += "<p><em>No new papers this week.</em></p>"
+            html += '<p class="empty">No new papers this week.</p>'
     
     html += """
-        <hr>
-        <p style="color: #95a5a6; font-size: 12px;">
-            Generated by Neuroscience Newsletter Agent
-        </p>
+        <div class="footer">
+            <p>Generated by Neuroscience Newsletter Agent<br>
+            Sources: PubMed, arXiv, bioRxiv, medRxiv, Google Scholar</p>
+        </div>
+        </div>
     </body>
     </html>
     """
@@ -246,42 +364,28 @@ def send_email(html_content):
     msg["Subject"] = f"🧠 Neuroscience Weekly - {datetime.now():%B %d, %Y}"
     msg["From"] = EMAIL_CONFIG["sender"]
     msg["To"] = EMAIL_CONFIG["recipient"]
-    
     msg.attach(MIMEText(html_content, "html"))
     
     try:
-        # Use SSL for Libero (port 465)
         if EMAIL_CONFIG.get("use_ssl", False):
             with smtplib.SMTP_SSL(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
                 server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
-                server.sendmail(
-                    EMAIL_CONFIG["sender"],
-                    EMAIL_CONFIG["recipient"],
-                    msg.as_string()
-                )
+                server.sendmail(EMAIL_CONFIG["sender"], EMAIL_CONFIG["recipient"], msg.as_string())
         else:
-            # Use STARTTLS for Gmail (port 587)
             with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
                 server.starttls()
                 server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
-                server.sendmail(
-                    EMAIL_CONFIG["sender"],
-                    EMAIL_CONFIG["recipient"],
-                    msg.as_string()
-                )
-        print("✓ Newsletter sent!")
+                server.sendmail(EMAIL_CONFIG["sender"], EMAIL_CONFIG["recipient"], msg.as_string())
+        print("\n✅ Newsletter sent!")
         return True
     except Exception as e:
-        print(f"✗ Email error: {e}")
+        print(f"\n❌ Email error: {e}")
         return False
 
 
-# ============== MAIN ==============
-
 def run_newsletter():
-    """Main function to collect and send newsletter."""
     print(f"\n{'='*50}")
-    print(f"Running newsletter: {datetime.now()}")
+    print(f"🧠 Neuroscience Newsletter - {datetime.now():%Y-%m-%d %H:%M}")
     print('='*50)
     
     newsletter = collect_papers()
@@ -290,14 +394,10 @@ def run_newsletter():
 
 
 def main():
-    """Run newsletter - supports scheduled mode or one-time run."""
-    
-    # One-time run (for GitHub Actions / cron)
     if "--run-once" in sys.argv:
         run_newsletter()
         return
     
-    # Continuous scheduled mode (for local running)
     try:
         import schedule
     except ImportError:
@@ -307,8 +407,6 @@ def main():
     
     print("Neuroscience Newsletter Agent Started")
     print("Scheduled: Every Monday at 8:00 AM")
-    print("-" * 40)
-    
     schedule.every().monday.at("08:00").do(run_newsletter)
     
     import time
