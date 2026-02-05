@@ -15,11 +15,12 @@ from xml.etree import ElementTree as ET
 # ============== CONFIGURATION ==============
 # Uses environment variables (for GitHub Actions) or fallback values
 EMAIL_CONFIG = {
-    "sender": os.getenv("EMAIL_SENDER", "your_email@gmail.com"),
-    "password": os.getenv("EMAIL_PASSWORD", "your_app_password"),
-    "recipient": os.getenv("EMAIL_RECIPIENT", "your_email@gmail.com"),
-    "smtp_server": "smtp.gmail.com",
-    "smtp_port": 587
+    "sender": os.getenv("EMAIL_SENDER", "your_email@libero.it"),
+    "password": os.getenv("EMAIL_PASSWORD", "your_password"),
+    "recipient": os.getenv("EMAIL_RECIPIENT", "your_email@libero.it"),
+    "smtp_server": "smtp.libero.it",
+    "smtp_port": 465,
+    "use_ssl": True  # Libero uses SSL on port 465
 }
 
 # Search queries for each category
@@ -249,14 +250,25 @@ def send_email(html_content):
     msg.attach(MIMEText(html_content, "html"))
     
     try:
-        with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
-            server.starttls()
-            server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
-            server.sendmail(
-                EMAIL_CONFIG["sender"],
-                EMAIL_CONFIG["recipient"],
-                msg.as_string()
-            )
+        # Use SSL for Libero (port 465)
+        if EMAIL_CONFIG.get("use_ssl", False):
+            with smtplib.SMTP_SSL(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
+                server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
+                server.sendmail(
+                    EMAIL_CONFIG["sender"],
+                    EMAIL_CONFIG["recipient"],
+                    msg.as_string()
+                )
+        else:
+            # Use STARTTLS for Gmail (port 587)
+            with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
+                server.starttls()
+                server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
+                server.sendmail(
+                    EMAIL_CONFIG["sender"],
+                    EMAIL_CONFIG["recipient"],
+                    msg.as_string()
+                )
         print("✓ Newsletter sent!")
         return True
     except Exception as e:
