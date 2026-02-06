@@ -25,6 +25,7 @@ _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 print("  Model loaded.")
 
 SIMILARITY_THRESHOLD = 0.82
+MIN_KEYWORD_FREQ = 2  # A word must appear in at least this many rejected titles to become a negative keyword
 
 # ============== CONFIGURATION ==============
 EMAIL_CONFIG = {
@@ -219,6 +220,82 @@ def is_rejected(title, rejected_titles):
     return calculate_similarity(norm_title, rejected_titles)
 
 
+# ============== DYNAMIC QUERY REFINEMENT ==============
+
+# Words that are too generic to be useful as negative keywords
+STOP_WORDS = {
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+    "has", "have", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "can", "shall", "not", "no", "nor", "so",
+    "as", "if", "then", "than", "that", "this", "these", "those", "it",
+    "its", "all", "each", "every", "both", "few", "more", "most", "other",
+    "some", "such", "only", "own", "same", "too", "very", "just", "about",
+    "above", "after", "again", "also", "any", "before", "between", "both",
+    "during", "here", "how", "into", "new", "now", "over", "through",
+    "under", "up", "out", "what", "when", "where", "which", "while", "who",
+    "why", "using", "based", "via", "among", "across", "within", "without",
+    # Domain-generic words that would over-filter neuroscience results
+    "study", "analysis", "method", "approach", "model", "results", "effect",
+    "effects", "role", "novel", "review", "data", "case", "patients",
+    "associated", "related", "clinical", "human", "brain", "neural",
+    "network", "learning", "deep", "machine", "imaging", "mri", "fmri",
+}
+
+
+def get_negative_keywords(rejected_titles):
+    """Extract frequent significant words from rejected titles.
+
+    Returns a list of words that appear in at least MIN_KEYWORD_FREQ
+    rejected titles (excluding stop words), sorted by frequency.
+    """
+    from collections import Counter
+
+    if not rejected_titles:
+        return []
+
+    word_counts = Counter()
+    for title in rejected_titles:
+        # Get unique words per title (so one title can't inflate a word's count)
+        words = set(re.findall(r"[a-z0-9]{3,}", title.lower()))
+        words -= STOP_WORDS
+        word_counts.update(words)
+
+    # Only keep words appearing in enough rejected titles
+    keywords = [word for word, count in word_counts.most_common()
+                if count >= MIN_KEYWORD_FREQ]
+
+    if keywords:
+        print(f"  Negative keywords (freq >= {MIN_KEYWORD_FREQ}): {keywords}")
+
+    return keywords
+
+
+def refine_query(query, negative_keywords, max_negatives=3):
+    """Append NOT terms to a query based on negative keywords.
+
+    Only appends up to max_negatives terms to avoid overly restrictive queries.
+    Skips keywords that already appear in the original query (to avoid
+    negating something you're intentionally searching for).
+    """
+    if not negative_keywords:
+        return query
+
+    query_lower = query.lower()
+    not_terms = []
+    for kw in negative_keywords:
+        if kw not in query_lower:
+            not_terms.append(kw)
+        if len(not_terms) >= max_negatives:
+            break
+
+    if not not_terms:
+        return query
+
+    not_clause = " ".join(f"NOT {term}" for term in not_terms)
+    return f"({query}) {not_clause}"
+
+
 # ============== DATA SOURCES ==============
 
 def search_pubmed(query, max_results=5, filter_journals=True):
@@ -397,6 +474,7 @@ def collect_papers():
     """Collect papers for all categories, filtering rejected ones."""
     newsletter = {}
     rejected_titles = load_all_rejected()
+    negative_kw = get_negative_keywords(rejected_titles)
     rejected_count = 0
 
     for category, config in CATEGORIES.items():
@@ -405,9 +483,13 @@ def collect_papers():
         seen_titles = set()
 
         for query in config["queries"]:
-            print(f"  Query: {query[:50]}...")
+            refined = refine_query(query, negative_kw)
+            if refined != query:
+                print(f"  Query (refined): {refined[:80]}...")
+            else:
+                print(f"  Query: {query[:50]}...")
 
-            for paper in search_pubmed(query, 5):
+            for paper in search_pubmed(refined, 5):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
                     if is_rejected(paper["title"], rejected_titles):
@@ -416,7 +498,7 @@ def collect_papers():
                     papers.append(paper)
                     seen_titles.add(title_lower)
 
-            for paper in search_arxiv(query, 4):
+            for paper in search_arxiv(refined, 4):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
                     if is_rejected(paper["title"], rejected_titles):
