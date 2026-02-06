@@ -29,7 +29,7 @@ EMAIL_CONFIG = {
 
 # GitHub repo where this script lives (for reject issues)
 # Format: "username/repo-name"
-GITHUB_REPO = os.getenv("GITHUB_REPO", "your-username/your-repo-name")
+GITHUB_REPO = os.getenv("GITHUB_REPO", "Mantrainment/neuroscience_newsletter")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")  # optional, needed for private repos
 
 # Target journals for PubMed filtering
