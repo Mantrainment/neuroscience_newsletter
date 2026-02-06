@@ -26,6 +26,7 @@ _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 print("  Model loaded.")
 
 SIMILARITY_THRESHOLD = 0.82
+STAR_BOOST_THRESHOLD = 0.65  # Papers this similar to starred ones get priority
 MIN_KEYWORD_FREQ = 2  # A word must appear in at least this many rejected titles to become a negative keyword
 
 # ============== CONFIGURATION ==============
@@ -105,45 +106,91 @@ FEEDBACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedba
 _ISSUE_SEPARATOR = "\n---\n"
 
 
-def load_feedback_file():
-    """Load rejected papers from local feedback.json.
+def _load_feedback_data():
+    """Load the entire feedback.json file.
 
-    Supports both old format (list of title strings) and new format
-    (list of dicts with 'title' and 'abstract' keys).
+    Returns dict with keys: rejected_titles, starred_papers, sent_history.
     """
     if not os.path.exists(FEEDBACK_FILE):
-        return []
+        return {"rejected_titles": [], "starred_papers": [], "sent_history": []}
     try:
         with open(FEEDBACK_FILE, "r") as f:
             data = json.load(f)
-        raw = data.get("rejected_titles", [])  # key kept for backward compat
-        papers = []
-        for item in raw:
-            if isinstance(item, dict):
-                papers.append({"title": item.get("title", ""), "abstract": item.get("abstract", "")})
-            else:
-                # Old format: plain string = title only
-                papers.append({"title": str(item), "abstract": ""})
-        return papers
+        return {
+            "rejected_titles": data.get("rejected_titles", []),
+            "starred_papers": data.get("starred_papers", []),
+            "sent_history": data.get("sent_history", []),
+        }
     except json.JSONDecodeError as e:
         print("\n" + "!" * 60)
         print("  ERROR: feedback.json is not valid JSON!")
         print(f"  Details: {e}")
         print("!" * 60 + "\n")
-        return []
+        return {"rejected_titles": [], "starred_papers": [], "sent_history": []}
     except IOError:
-        return []
+        return {"rejected_titles": [], "starred_papers": [], "sent_history": []}
 
 
-def save_feedback_file(papers):
-    """Save rejected papers list to feedback.json."""
-    data = {"rejected_titles": papers}  # key kept for backward compat
+def _save_feedback_data(data):
+    """Save the entire feedback.json file."""
     try:
         with open(FEEDBACK_FILE, "w") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"  Saved {len(papers)} rejected papers to feedback.json")
     except IOError as e:
         print(f"  Error saving feedback.json: {e}")
+
+
+def _parse_paper_list(raw):
+    """Parse a list of papers from feedback.json (handles old and new formats)."""
+    papers = []
+    for item in raw:
+        if isinstance(item, dict):
+            papers.append({"title": item.get("title", ""), "abstract": item.get("abstract", "")})
+        else:
+            papers.append({"title": str(item), "abstract": ""})
+    return papers
+
+
+def load_feedback_file():
+    """Load rejected papers from feedback.json."""
+    data = _load_feedback_data()
+    return _parse_paper_list(data["rejected_titles"])
+
+
+def load_starred_papers():
+    """Load starred (positive feedback) papers from feedback.json."""
+    data = _load_feedback_data()
+    return _parse_paper_list(data["starred_papers"])
+
+
+def load_sent_history():
+    """Load set of normalized titles of all previously sent papers."""
+    data = _load_feedback_data()
+    return set(data["sent_history"])
+
+
+def save_feedback_file(rejected):
+    """Save rejected papers list to feedback.json (preserves other keys)."""
+    data = _load_feedback_data()
+    data["rejected_titles"] = rejected
+    _save_feedback_data(data)
+    print(f"  Saved {len(rejected)} rejected papers to feedback.json")
+
+
+def save_starred_papers(starred):
+    """Save starred papers list to feedback.json (preserves other keys)."""
+    data = _load_feedback_data()
+    data["starred_papers"] = starred
+    _save_feedback_data(data)
+    print(f"  Saved {len(starred)} starred papers to feedback.json")
+
+
+def save_sent_history(sent_titles):
+    """Save sent paper titles to feedback.json (preserves other keys)."""
+    data = _load_feedback_data()
+    data["sent_history"] = list(sent_titles)
+    _save_feedback_data(data)
+    print(f"  Saved {len(sent_titles)} sent titles to history")
 
 
 def _parse_issue_body(body):
@@ -183,11 +230,7 @@ def _close_github_issue(issue_number):
 def sync_and_cleanup():
     """Sync open GitHub Issues into feedback.json, then close them.
 
-    1. Load existing feedback.json
-    2. Fetch all open 'reject' issues from GitHub
-    3. Add new papers to feedback.json (dedup by normalized title)
-    4. Close processed issues on GitHub
-    5. Save updated feedback.json
+    Handles both 'reject' and 'star' labeled issues.
     """
     if not GITHUB_REPO or GITHUB_REPO == "your-username/your-repo-name":
         print("  Skipping sync: GITHUB_REPO not configured")
@@ -195,63 +238,67 @@ def sync_and_cleanup():
 
     print("\n  Syncing GitHub Issues → feedback.json...")
 
-    # Load existing rejected papers
-    existing = load_feedback_file()
-    existing_titles = {_normalize_title(p["title"]) for p in existing}
+    # Load existing data
+    existing_rejected = load_feedback_file()
+    existing_starred = load_starred_papers()
+    rejected_titles = {_normalize_title(p["title"]) for p in existing_rejected}
+    starred_titles = {_normalize_title(p["title"]) for p in existing_starred}
 
-    # Fetch open reject issues
     url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
     headers = {"Accept": "application/vnd.github.v3+json"}
     if GITHUB_TOKEN:
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
 
-    params = {"labels": "reject", "state": "open", "per_page": 100}
+    # Process both reject and star labels
+    for label, existing_list, existing_set, label_name in [
+        ("reject", existing_rejected, rejected_titles, "rejected"),
+        ("star", existing_starred, starred_titles, "starred"),
+    ]:
+        params = {"labels": label, "state": "open", "per_page": 100}
 
-    try:
-        resp = requests.get(url, headers=headers, params=params, timeout=15)
-        if resp.status_code != 200:
-            print(f"  GitHub API error: {resp.status_code}")
-            return
-        issues = resp.json()
-    except Exception as e:
-        print(f"  GitHub sync error: {e}")
-        return
-
-    if not issues:
-        print("  No open reject issues to sync")
-        return
-
-    new_count = 0
-    closed_count = 0
-
-    for issue in issues:
-        body = issue.get("body", "")
-        if not body:
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=15)
+            if resp.status_code != 200:
+                print(f"  GitHub API error ({label}): {resp.status_code}")
+                continue
+            issues = resp.json()
+        except Exception as e:
+            print(f"  GitHub sync error ({label}): {e}")
             continue
 
-        paper = _parse_issue_body(body)
-        norm = _normalize_title(paper["title"])
+        if not issues:
+            print(f"  No open {label} issues to sync")
+            continue
 
-        # Add to list if not already present
-        if norm not in existing_titles:
-            existing.append(paper)
-            existing_titles.add(norm)
-            new_count += 1
+        new_count = 0
+        closed_count = 0
 
-        # Close the issue so it won't be processed again
-        if _close_github_issue(issue["number"]):
-            closed_count += 1
+        for issue in issues:
+            body = issue.get("body", "")
+            if not body:
+                continue
 
-    # Save updated feedback
-    save_feedback_file(existing)
-    print(f"  Sync complete: {new_count} new papers added, {closed_count} issues closed")
+            paper = _parse_issue_body(body)
+            norm = _normalize_title(paper["title"])
+
+            if norm not in existing_set:
+                existing_list.append(paper)
+                existing_set.add(norm)
+                new_count += 1
+
+            if _close_github_issue(issue["number"]):
+                closed_count += 1
+
+        print(f"  {label_name.capitalize()}: {new_count} new, {closed_count} issues closed")
+
+    # Save both lists
+    save_feedback_file(existing_rejected)
+    save_starred_papers(existing_starred)
 
 
 def load_all_rejected():
     """Load rejected papers from feedback.json (primary source).
 
-    GitHub Issues are synced into feedback.json by sync_and_cleanup()
-    before this is called, so we only need to read the local file.
     Returns list of dicts: [{"title": ..., "abstract": ...}, ...]
     """
     papers = load_feedback_file()
@@ -326,6 +373,47 @@ def is_rejected(title, abstract, rejected_papers):
     # Combine title + abstract for richer semantic matching
     combined = f"{title} {abstract}".strip()
     return calculate_similarity(combined, rejected_papers)
+
+
+# ============== POSITIVE FEEDBACK (STAR SCORING) ==============
+
+# Cache for starred paper embeddings (computed once per run)
+_starred_cache = {"papers": None, "embeddings": None}
+
+
+def _get_starred_embeddings(starred_papers):
+    """Compute and cache embeddings for starred papers."""
+    if _starred_cache["papers"] is not starred_papers:
+        _starred_cache["papers"] = starred_papers
+        if starred_papers:
+            texts = [f"{p['title']} {p['abstract']}".strip() for p in starred_papers]
+            _starred_cache["embeddings"] = _EMBED_MODEL.encode(
+                texts, normalize_embeddings=True
+            )
+        else:
+            _starred_cache["embeddings"] = None
+    return _starred_cache["embeddings"]
+
+
+def calculate_star_score(title, abstract, starred_papers):
+    """Calculate how similar a paper is to starred (liked) papers.
+
+    Returns a float 0.0-1.0 representing the max similarity to any starred paper.
+    Papers above STAR_BOOST_THRESHOLD are considered relevant to user interests.
+    """
+    if not starred_papers:
+        return 0.0
+
+    starred_embeddings = _get_starred_embeddings(starred_papers)
+    if starred_embeddings is None:
+        return 0.0
+
+    combined = f"{title} {abstract}".strip()
+    new_embedding = _EMBED_MODEL.encode([combined], normalize_embeddings=True)
+
+    scores = np.dot(starred_embeddings, new_embedding.T).flatten()
+    max_score = float(np.max(scores))
+    return max_score
 
 
 # ============== DYNAMIC QUERY REFINEMENT ==============
@@ -597,11 +685,22 @@ def search_google_scholar(query, max_results=3):
 # ============== NEWSLETTER BUILDER ==============
 
 def collect_papers():
-    """Collect papers for all categories, filtering rejected ones."""
+    """Collect papers for all categories, filtering rejected and already-sent ones.
+
+    Papers are scored by similarity to starred papers and sorted by relevance.
+    """
     newsletter = {}
     rejected_papers = load_all_rejected()
+    starred_papers = load_starred_papers()
+    sent_history = load_sent_history()
     negative_kw = get_negative_keywords(rejected_papers)
     rejected_count = 0
+    dedup_count = 0
+
+    if starred_papers:
+        print(f"  Loaded {len(starred_papers)} starred papers for boosting")
+    if sent_history:
+        print(f"  Loaded {len(sent_history)} previously sent titles for dedup")
 
     for category, config in CATEGORIES.items():
         print(f"\n  {category}...")
@@ -617,39 +716,72 @@ def collect_papers():
 
             for paper in search_pubmed(refined, 5):
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
 
             for paper in search_arxiv(refined, 4):
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
 
             for paper in search_biorxiv(query, 3):
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
 
             for paper in search_google_scholar(query, 3):
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
+
+        # Score papers by similarity to starred papers and sort
+        if starred_papers and papers:
+            for paper in papers:
+                paper["_star_score"] = calculate_star_score(
+                    paper["title"], paper.get("abstract", ""), starred_papers
+                )
+            papers.sort(key=lambda p: p["_star_score"], reverse=True)
+
+            # Log boosted papers
+            boosted = [p for p in papers if p["_star_score"] >= STAR_BOOST_THRESHOLD]
+            if boosted:
+                print(f"  ★ {len(boosted)} papers boosted by star similarity")
 
         newsletter[category] = {
             "description": config["description"],
@@ -659,6 +791,8 @@ def collect_papers():
 
     if rejected_count:
         print(f"\n  Filtered out {rejected_count} rejected papers")
+    if dedup_count:
+        print(f"  Skipped {dedup_count} previously sent papers")
 
     return newsletter
 
@@ -681,6 +815,8 @@ def format_newsletter(newsletter):
             .source { color: #7f8c8d; font-size: 12px; display: inline-block; margin-top: 8px; background: #ecf0f1; padding: 3px 10px; border-radius: 12px; }
             .reject-link { color: #e74c3c; font-size: 12px; text-decoration: none; margin-left: 10px; cursor: pointer; }
             .reject-link:hover { text-decoration: underline; }
+            .star-link { color: #f39c12; font-size: 12px; text-decoration: none; margin-left: 6px; cursor: pointer; }
+            .star-link:hover { text-decoration: underline; }
             .empty { color: #bdc3c7; font-style: italic; padding: 15px; }
             .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1; color: #95a5a6; font-size: 11px; }
         </style>
@@ -710,26 +846,38 @@ def format_newsletter(newsletter):
 
         if data["papers"]:
             for i, paper in enumerate(data["papers"], 1):
-                # [Reject] opens a pre-filled GitHub Issue with title + abstract
-                issue_title = url_quote(f"Reject: {paper['title'][:80]}")
-                # Body: title + separator + abstract (for richer filtering)
+                # Build issue body (shared between reject and star)
                 abstract = paper.get("abstract", "")
                 if abstract:
                     issue_body_raw = f"{paper['title']}{_ISSUE_SEPARATOR}{abstract}"
                 else:
                     issue_body_raw = paper["title"]
-                # GitHub URL has a ~8000 char limit; truncate abstract if needed
                 if len(issue_body_raw) > 4000:
                     issue_body_raw = issue_body_raw[:4000] + "..."
                 issue_body = url_quote(issue_body_raw)
-                reject_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=reject&title={issue_title}&body={issue_body}"
+
+                # [Reject] link
+                reject_title = url_quote(f"Reject: {paper['title'][:80]}")
+                reject_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=reject&title={reject_title}&body={issue_body}"
+
+                # [Star] link
+                star_title = url_quote(f"Star: {paper['title'][:80]}")
+                star_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=star&title={star_title}&body={issue_body}"
+
+                # Show ★ badge if paper was boosted by star similarity
+                star_score = paper.get("_star_score", 0)
+                star_badge = ""
+                if star_score >= STAR_BOOST_THRESHOLD:
+                    pct = int(star_score * 100)
+                    star_badge = f' <span style="color:#f39c12; font-size:11px;" title="Similar to your starred papers ({pct}% match)">&#x2B50;</span>'
 
                 html += f"""
                 <div class="paper">
                     <span style="color:#3498db; font-weight:bold; margin-right:8px;">{i}.</span>
-                    <a class="title-link" href="{paper['url']}" target="_blank">{paper['title']}</a>
+                    <a class="title-link" href="{paper['url']}" target="_blank">{paper['title']}</a>{star_badge}
                     <span class="source">&#x1F50E; {paper['source']}</span>
-                    <a class="reject-link" href="{reject_url}" target="_blank" title="Open GitHub Issue to reject this paper">[Reject]</a>
+                    <a class="star-link" href="{star_url}" target="_blank" title="Star this paper — similar papers will be prioritized">[&#x2605; Star]</a>
+                    <a class="reject-link" href="{reject_url}" target="_blank" title="Reject — similar papers will be filtered out">[Reject]</a>
                 </div>
                 """
         else:
@@ -739,7 +887,7 @@ def format_newsletter(newsletter):
         <div class="footer">
             <p>Generated by Neuroscience Newsletter Agent<br>
             Sources: PubMed, arXiv, bioRxiv, medRxiv, Google Scholar<br>
-            <em>Click [Reject] to open a GitHub Issue &mdash; just press "Submit" and the paper will be filtered next run</em></p>
+            <em>[&#x2605; Star] = more like this &bull; [Reject] = less like this &mdash; just press "Submit" on the GitHub Issue</em></p>
         </div>
         </div>
     </body>
@@ -784,7 +932,15 @@ def run_newsletter():
     # Step 2: Collect, filter, format, and send
     newsletter = collect_papers()
     html = format_newsletter(newsletter)
-    send_email(html)
+    success = send_email(html)
+
+    # Step 3: Record all sent papers in history (prevents duplicates next week)
+    if success:
+        sent_history = load_sent_history()
+        for category_data in newsletter.values():
+            for paper in category_data["papers"]:
+                sent_history.add(_normalize_title(paper["title"]))
+        save_sent_history(sent_history)
 
 
 def main():
