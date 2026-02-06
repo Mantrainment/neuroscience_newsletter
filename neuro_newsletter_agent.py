@@ -16,6 +16,15 @@ import re
 import unicodedata
 from xml.etree import ElementTree as ET
 from urllib.parse import quote as url_quote
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+# Load embedding model once at startup
+print("  Loading embedding model (all-MiniLM-L6-v2)...")
+_EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+print("  Model loaded.")
+
+SIMILARITY_THRESHOLD = 0.82
 
 # ============== CONFIGURATION ==============
 EMAIL_CONFIG = {
@@ -161,8 +170,43 @@ def _normalize_title(title):
     return t
 
 
+# Cache for rejected title embeddings (computed once per run)
+_rejected_cache = {"titles": None, "embeddings": None}
+
+
+def _get_rejected_embeddings(rejected_titles):
+    """Compute and cache embeddings for rejected titles."""
+    if _rejected_cache["titles"] is not rejected_titles:
+        _rejected_cache["titles"] = rejected_titles
+        if rejected_titles:
+            _rejected_cache["embeddings"] = _EMBED_MODEL.encode(
+                rejected_titles, normalize_embeddings=True
+            )
+        else:
+            _rejected_cache["embeddings"] = None
+    return _rejected_cache["embeddings"]
+
+
 def calculate_similarity(new_title, rejected_titles):
-    """Placeholder: will use embeddings later. Returns False for now."""
+    """Check if new_title is semantically similar to any rejected title using embeddings."""
+    if not rejected_titles:
+        return False
+
+    rejected_embeddings = _get_rejected_embeddings(rejected_titles)
+    if rejected_embeddings is None:
+        return False
+
+    new_embedding = _EMBED_MODEL.encode([new_title], normalize_embeddings=True)
+
+    # Cosine similarity (dot product since embeddings are normalized)
+    scores = np.dot(rejected_embeddings, new_embedding.T).flatten()
+    max_idx = int(np.argmax(scores))
+    max_score = float(scores[max_idx])
+
+    if max_score >= SIMILARITY_THRESHOLD:
+        print(f"    [Semantic Similarity] Rejected: '{new_title}' "
+              f"(score={max_score:.3f} vs '{rejected_titles[max_idx]}')")
+        return True
     return False
 
 
