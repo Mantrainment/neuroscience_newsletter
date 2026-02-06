@@ -1,7 +1,7 @@
 """
 Neuroscience Weekly Newsletter Agent
 Scrapes PubMed, arXiv, bioRxiv, and Google Scholar for recent papers.
-Supports feedback.json for rejecting irrelevant papers.
+Supports feedback via GitHub Issues for rejecting irrelevant papers.
 """
 
 import requests
@@ -12,10 +12,10 @@ import smtplib
 import os
 import sys
 import json
+import re
+import unicodedata
 from xml.etree import ElementTree as ET
-from urllib.parse import quote as url_quote, parse_qs, urlparse
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import threading
+from urllib.parse import quote as url_quote
 
 # ============== CONFIGURATION ==============
 EMAIL_CONFIG = {
@@ -26,6 +26,11 @@ EMAIL_CONFIG = {
     "smtp_port": 465,
     "use_ssl": True
 }
+
+# GitHub repo where this script lives (for reject issues)
+# Format: "username/repo-name"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "your-username/your-repo-name")
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")  # optional, needed for private repos
 
 # Target journals for PubMed filtering
 TARGET_JOURNALS = [
@@ -81,51 +86,84 @@ CATEGORIES = {
 MAX_PAPERS_PER_CATEGORY = 16
 
 FEEDBACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedback.json")
-REJECT_SERVER_PORT = 7878
 
 
 # ============== FEEDBACK SYSTEM ==============
 
-def load_feedback():
-    """Load rejected titles from feedback.json."""
+def load_feedback_file():
+    """Load rejected titles from local feedback.json."""
     if not os.path.exists(FEEDBACK_FILE):
-        default = {"rejected_titles": []}
-        with open(FEEDBACK_FILE, "w") as f:
-            json.dump(default, f, indent=2)
-        return default
+        return []
     try:
         with open(FEEDBACK_FILE, "r") as f:
             data = json.load(f)
-        rejected = data.get("rejected_titles", [])
-        print(f"  Loaded {len(rejected)} rejected titles from feedback.json")
-        return data
+        return data.get("rejected_titles", [])
     except json.JSONDecodeError as e:
         print("\n" + "!" * 60)
         print("  ERROR: feedback.json is not valid JSON!")
         print(f"  Details: {e}")
-        print("  Common fix: check for missing commas between entries.")
-        print("  Feedback filtering is DISABLED for this run.")
         print("!" * 60 + "\n")
-        return {"rejected_titles": []}
-    except IOError as e:
-        print(f"\n  ERROR: Cannot read feedback.json: {e}")
-        return {"rejected_titles": []}
+        return []
+    except IOError:
+        return []
 
 
-def calculate_similarity(new_title, rejected_titles):
-    """Placeholder: will use embeddings later. Returns False for now."""
-    return False
+def load_rejected_from_github():
+    """Load rejected titles from GitHub Issues labeled 'reject'."""
+    if not GITHUB_REPO or GITHUB_REPO == "your-username/your-repo-name":
+        return []
+
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+
+    params = {
+        "labels": "reject",
+        "state": "open",
+        "per_page": 100
+    }
+
+    titles = []
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        if resp.status_code == 200:
+            for issue in resp.json():
+                # The paper title is in the issue body
+                body = issue.get("body", "")
+                if body:
+                    titles.append(body.strip())
+            print(f"  Loaded {len(titles)} rejected titles from GitHub Issues")
+        else:
+            print(f"  GitHub Issues API error: {resp.status_code}")
+    except Exception as e:
+        print(f"  GitHub Issues error: {e}")
+
+    return titles
+
+
+def load_all_rejected():
+    """Load rejected titles from both feedback.json and GitHub Issues."""
+    file_titles = load_feedback_file()
+    github_titles = load_rejected_from_github()
+    all_titles = file_titles + github_titles
+    if all_titles:
+        print(f"  Total rejected titles: {len(all_titles)} ({len(file_titles)} from file, {len(github_titles)} from GitHub)")
+    return all_titles
 
 
 def _normalize_title(title):
     """Normalize a title for robust comparison."""
-    import unicodedata
-    import re
     t = unicodedata.normalize("NFKC", title)
     t = t.lower().strip()
     t = t.rstrip(".")
     t = re.sub(r"\s+", " ", t)
     return t
+
+
+def calculate_similarity(new_title, rejected_titles):
+    """Placeholder: will use embeddings later. Returns False for now."""
+    return False
 
 
 def is_rejected(title, rejected_titles):
@@ -314,8 +352,7 @@ def search_google_scholar(query, max_results=3):
 def collect_papers():
     """Collect papers for all categories, filtering rejected ones."""
     newsletter = {}
-    feedback = load_feedback()
-    rejected_titles = feedback.get("rejected_titles", [])
+    rejected_titles = load_all_rejected()
     rejected_count = 0
 
     for category, config in CATEGORIES.items():
@@ -375,7 +412,7 @@ def collect_papers():
 
 
 def format_newsletter(newsletter):
-    """Format newsletter as HTML with Reject links."""
+    """Format newsletter as HTML with Reject links via GitHub Issues."""
     date_str = datetime.now().strftime("%B %d, %Y")
 
     css = """
@@ -421,13 +458,17 @@ def format_newsletter(newsletter):
 
         if data["papers"]:
             for i, paper in enumerate(data["papers"], 1):
-                reject_url = f"http://localhost:{REJECT_SERVER_PORT}/reject?title={url_quote(paper['title'])}"
+                # [Reject] opens a pre-filled GitHub Issue — just click "Submit new issue"
+                issue_title = url_quote(f"Reject: {paper['title'][:80]}")
+                issue_body = url_quote(paper["title"])
+                reject_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=reject&title={issue_title}&body={issue_body}"
+
                 html += f"""
                 <div class="paper">
                     <span style="color:#3498db; font-weight:bold; margin-right:8px;">{i}.</span>
                     <a class="title-link" href="{paper['url']}" target="_blank">{paper['title']}</a>
                     <span class="source">&#x1F50E; {paper['source']}</span>
-                    <a class="reject-link" href="{reject_url}" title="Reject this paper">[Reject]</a>
+                    <a class="reject-link" href="{reject_url}" target="_blank" title="Open GitHub Issue to reject this paper">[Reject]</a>
                 </div>
                 """
         else:
@@ -437,7 +478,7 @@ def format_newsletter(newsletter):
         <div class="footer">
             <p>Generated by Neuroscience Newsletter Agent<br>
             Sources: PubMed, arXiv, bioRxiv, medRxiv, Google Scholar<br>
-            <em>Click [Reject] to remove a paper from future newsletters (requires reject server running)</em></p>
+            <em>Click [Reject] to open a GitHub Issue &mdash; just press "Submit" and the paper will be filtered next run</em></p>
         </div>
         </div>
     </body>
@@ -481,106 +522,8 @@ def run_newsletter():
     send_email(html)
 
 
-def add_rejection(title):
-    """Add a title to feedback.json rejected_titles list."""
-    feedback = load_feedback()
-    rejected = feedback.get("rejected_titles", [])
-
-    # Check if already present (normalized)
-    if _normalize_title(title) in {_normalize_title(t) for t in rejected}:
-        print(f"  Already rejected: {title}")
-        return False
-
-    rejected.append(title)
-    feedback["rejected_titles"] = rejected
-    with open(FEEDBACK_FILE, "w") as f:
-        json.dump(feedback, f, indent=2, ensure_ascii=False)
-    print(f"  Added to rejected list: {title}")
-    print(f"  Total rejected: {len(rejected)}")
-    return True
-
-
-# ============== REJECT SERVER ==============
-
-class RejectHandler(BaseHTTPRequestHandler):
-    """Handles [Reject] clicks from the newsletter email."""
-
-    def do_GET(self):
-        parsed = urlparse(self.path)
-        if parsed.path == "/reject":
-            params = parse_qs(parsed.query)
-            title = params.get("title", [""])[0]
-            if title:
-                added = add_rejection(title)
-                if added:
-                    msg = f"Rejected: {title}"
-                else:
-                    msg = f"Already rejected: {title}"
-                self._respond(200, msg)
-            else:
-                self._respond(400, "No title provided.")
-        elif parsed.path == "/status":
-            feedback = load_feedback()
-            count = len(feedback.get("rejected_titles", []))
-            self._respond(200, f"Reject server running. {count} titles rejected so far.")
-        else:
-            self._respond(404, "Not found.")
-
-    def _respond(self, code, message):
-        self.send_response(code)
-        self.send_header("Content-Type", "text/html")
-        self.end_headers()
-        color = "#27ae60" if code == 200 else "#e74c3c"
-        html = f"""<html><body style="font-family:sans-serif; display:flex; justify-content:center;
-            align-items:center; height:80vh; background:#f5f5f5;">
-            <div style="text-align:center; padding:40px; background:white; border-radius:10px;
-            box-shadow:0 2px 10px rgba(0,0,0,0.1); max-width:600px;">
-            <h2 style="color:{color};">{"&#x2714;" if code == 200 else "&#x2716;"} {message}</h2>
-            <p style="color:#95a5a6;">You can close this tab.</p></div></body></html>"""
-        self.wfile.write(html.encode())
-
-    def log_message(self, format, *args):
-        pass  # Suppress default logging
-
-
-def start_reject_server():
-    """Start the reject server in a background thread."""
-    try:
-        server = HTTPServer(("127.0.0.1", REJECT_SERVER_PORT), RejectHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        print(f"  Reject server running at http://localhost:{REJECT_SERVER_PORT}")
-        return server
-    except OSError as e:
-        print(f"  Could not start reject server: {e}")
-        return None
-
-
 def main():
-    # --reject "title" : safely add a title to feedback.json
-    if "--reject" in sys.argv:
-        idx = sys.argv.index("--reject")
-        if idx + 1 < len(sys.argv):
-            add_rejection(sys.argv[idx + 1])
-        else:
-            print('Usage: python neuro_newsletter_agent_1.py --reject "Paper Title Here"')
-        return
-
-    # --server : just run the reject server (keep it open while reading emails)
-    if "--server" in sys.argv:
-        server = start_reject_server()
-        if server:
-            print(f"\n  Reject server is running on http://localhost:{REJECT_SERVER_PORT}")
-            print("  Open your newsletter email and click [Reject] on papers you don't want.")
-            print("  Press Ctrl+C to stop.\n")
-            try:
-                server.serve_forever()
-            except KeyboardInterrupt:
-                print("\n  Server stopped.")
-        return
-
     if "--run-once" in sys.argv:
-        start_reject_server()  # also start server so rejects work immediately
         run_newsletter()
         return
 
@@ -593,7 +536,6 @@ def main():
 
     print("Neuroscience Newsletter Agent Started")
     print("Scheduled: Every Monday at 8:00 AM")
-    start_reject_server()
     schedule.every().monday.at("08:00").do(run_newsletter)
 
     import time
