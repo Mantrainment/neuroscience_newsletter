@@ -2,30 +2,42 @@ name: Weekly Neuroscience Newsletter
 
 on:
   schedule:
-    # Runs every Monday at 8:00 AM UTC
-    - cron: '0 8 * * 1'
-  
-  # Manual trigger for testing
-  workflow_dispatch:
+    - cron: '0 8 * * 1'  # Every Monday at 8:00 AM UTC
+  workflow_dispatch:  # Manual trigger
 
 jobs:
   send-newsletter:
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: write
+      issues: write
+
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      
-      - name: Run newsletter
-        env:
-          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
-        run: python neuro_newsletter_agent.py --run-once
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+
+    - name: Run newsletter
+      env:
+        EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        EMAIL_RECIPIENT: ${{ secrets.EMAIL_RECIPIENT }}
+        SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
+        GITHUB_REPO: ${{ github.repository }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python neuro_newsletter_agent.py --run-once
+
+    - name: Commit feedback.json
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add feedback.json
+        git diff --cached --quiet || git commit -m "Update feedback.json [skip ci]"
+        git push

@@ -135,62 +135,129 @@ def load_feedback_file():
         return []
 
 
-def load_rejected_from_github():
-    """Load rejected papers from GitHub Issues labeled 'reject'.
+def save_feedback_file(papers):
+    """Save rejected papers list to feedback.json."""
+    data = {"rejected_titles": papers}  # key kept for backward compat
+    try:
+        with open(FEEDBACK_FILE, "w") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"  Saved {len(papers)} rejected papers to feedback.json")
+    except IOError as e:
+        print(f"  Error saving feedback.json: {e}")
 
-    New format: issue body contains 'TITLE\\n---\\nABSTRACT'.
-    Old format (backward compat): issue body is just the title.
+
+def _parse_issue_body(body):
+    """Parse a GitHub Issue body into title and abstract."""
+    body = body.strip()
+    if _ISSUE_SEPARATOR in body:
+        parts = body.split(_ISSUE_SEPARATOR, 1)
+        return {"title": parts[0].strip(), "abstract": parts[1].strip()}
+    else:
+        return {"title": body, "abstract": ""}
+
+
+def _close_github_issue(issue_number):
+    """Close a GitHub Issue by number."""
+    if not GITHUB_TOKEN:
+        print(f"    Cannot close issue #{issue_number}: GITHUB_TOKEN not set")
+        return False
+
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/issues/{issue_number}"
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": f"token {GITHUB_TOKEN}"
+    }
+
+    try:
+        resp = requests.patch(url, headers=headers, json={"state": "closed"}, timeout=15)
+        if resp.status_code == 200:
+            return True
+        else:
+            print(f"    Failed to close issue #{issue_number}: {resp.status_code}")
+            return False
+    except Exception as e:
+        print(f"    Error closing issue #{issue_number}: {e}")
+        return False
+
+
+def sync_and_cleanup():
+    """Sync open GitHub Issues into feedback.json, then close them.
+
+    1. Load existing feedback.json
+    2. Fetch all open 'reject' issues from GitHub
+    3. Add new papers to feedback.json (dedup by normalized title)
+    4. Close processed issues on GitHub
+    5. Save updated feedback.json
     """
     if not GITHUB_REPO or GITHUB_REPO == "your-username/your-repo-name":
-        return []
+        print("  Skipping sync: GITHUB_REPO not configured")
+        return
 
+    print("\n  Syncing GitHub Issues → feedback.json...")
+
+    # Load existing rejected papers
+    existing = load_feedback_file()
+    existing_titles = {_normalize_title(p["title"]) for p in existing}
+
+    # Fetch open reject issues
     url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
     headers = {"Accept": "application/vnd.github.v3+json"}
     if GITHUB_TOKEN:
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
 
-    params = {
-        "labels": "reject",
-        "state": "open",
-        "per_page": 100
-    }
+    params = {"labels": "reject", "state": "open", "per_page": 100}
 
-    papers = []
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=15)
-        if resp.status_code == 200:
-            for issue in resp.json():
-                body = issue.get("body", "")
-                if not body:
-                    continue
-                body = body.strip()
-                if _ISSUE_SEPARATOR in body:
-                    # New format: title + abstract
-                    parts = body.split(_ISSUE_SEPARATOR, 1)
-                    papers.append({"title": parts[0].strip(), "abstract": parts[1].strip()})
-                else:
-                    # Old format: title only
-                    papers.append({"title": body, "abstract": ""})
-            print(f"  Loaded {len(papers)} rejected papers from GitHub Issues")
-        else:
-            print(f"  GitHub Issues API error: {resp.status_code}")
+        if resp.status_code != 200:
+            print(f"  GitHub API error: {resp.status_code}")
+            return
+        issues = resp.json()
     except Exception as e:
-        print(f"  GitHub Issues error: {e}")
+        print(f"  GitHub sync error: {e}")
+        return
 
-    return papers
+    if not issues:
+        print("  No open reject issues to sync")
+        return
+
+    new_count = 0
+    closed_count = 0
+
+    for issue in issues:
+        body = issue.get("body", "")
+        if not body:
+            continue
+
+        paper = _parse_issue_body(body)
+        norm = _normalize_title(paper["title"])
+
+        # Add to list if not already present
+        if norm not in existing_titles:
+            existing.append(paper)
+            existing_titles.add(norm)
+            new_count += 1
+
+        # Close the issue so it won't be processed again
+        if _close_github_issue(issue["number"]):
+            closed_count += 1
+
+    # Save updated feedback
+    save_feedback_file(existing)
+    print(f"  Sync complete: {new_count} new papers added, {closed_count} issues closed")
 
 
 def load_all_rejected():
-    """Load rejected papers from both feedback.json and GitHub Issues.
+    """Load rejected papers from feedback.json (primary source).
 
+    GitHub Issues are synced into feedback.json by sync_and_cleanup()
+    before this is called, so we only need to read the local file.
     Returns list of dicts: [{"title": ..., "abstract": ...}, ...]
     """
-    file_papers = load_feedback_file()
-    github_papers = load_rejected_from_github()
-    all_papers = file_papers + github_papers
-    if all_papers:
-        print(f"  Total rejected papers: {len(all_papers)} ({len(file_papers)} from file, {len(github_papers)} from GitHub)")
-    return all_papers
+    papers = load_feedback_file()
+    if papers:
+        print(f"  Loaded {len(papers)} rejected papers from feedback.json")
+    return papers
 
 
 def _normalize_title(title):
@@ -711,6 +778,10 @@ def run_newsletter():
     print(f"  Neuroscience Newsletter - {datetime.now():%Y-%m-%d %H:%M}")
     print('='*50)
 
+    # Step 1: Sync GitHub Issues into feedback.json and close them
+    sync_and_cleanup()
+
+    # Step 2: Collect, filter, format, and send
     newsletter = collect_papers()
     html = format_newsletter(newsletter)
     send_email(html)

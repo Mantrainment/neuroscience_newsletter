@@ -1,6 +1,56 @@
 {
-    "rejected_titles": [
-
-      
-    ]
+  "rejected_titles": [
+    {
+      "title": "Safe-NEureka: a Hybrid Modular Redundant DNN Accelerator for On-board Satellite AI Processing",
+      "abstract": "Low Earth Orbit (LEO) constellations are revolutionizing the space sector, with on-board Artificial Intelligence (AI) becoming pivotal for next-generation satellites. AI acceleration is essential for safety-critical functions such as autonomous Guidance, Navigation, and Control (GNC), where errors cannot be tolerated, and performance-critical processing of high-bandwidth sensor data, where occasional errors are tolerable. Consequently, AI accelerators for satellites must combine robust protection against radiation-induced faults with high throughput. This paper presents Safe-NEureka, a Hybrid Modular Redundant Deep Neural Network (DNN) accelerator for heterogeneous RISC-V systems. It operates in two modes: a redundancy mode utilizing Dual Modular Redundancy (DMR) with hardware-based recovery, and a performance mode repurposing redundant datapaths to maximize parallel throughput. Furthermore, its memory interface is protected by Error Correction Codes (ECCs), and the controller by Triple Modular Redundancy (TMR). Implementation in GlobalFoundries 12nm technology shows a 96 reduction in faulty executions in redundancy mode, with a manageable 15 area overhead. In performance mode, the architecture achieves near-baseline speeds on 3x3 dense convolutions with a 5 throughput and 11 efficiency reduction, compared to 48 and 53 in redundancy mode. This flexibility ensures high overheads are limited to critical tasks, establishing Safe-NEureka as a versatile solution for space applications."
+    },
+    {
+      "title": "Efficient Equivariant High-Order Crystal Tensor Prediction via Cartesian Local-Environment Many-Body Coupling",
+      "abstract": ""
+    },
+    {
+      "title": "Benchmarking and Enhancing PPG-Based Cuffless Blood Pressure Estimation Methods",
+      "abstract": ""
+    },
+    {
+      "title": "Toward Reliable and Explainable Nail Disease Classification: Leveraging Adversarial Training and Grad-CAM Visualization",
+      "abstract": ""
+    },
+    {
+      "title": "Long-term amyloid PET and MRI outcomes in a menopausal hormone therapy trial.",
+      "abstract": ""
+    },
+    {
+      "title": "Urinary tract infection-related delirium in Alzheimer's disease and related dementias: Clinical challenges and translational opportunities.",
+      "abstract": ""
+    },
+    {
+      "title": "Deep Variational Contrastive Learning for Joint Risk Stratification and Time-to-Event Estimation",
+      "abstract": ""
+    },
+    {
+      "title": "Disrupted Frontoparietal Dynamics in Neurofibromatosis Type 1: Reduced Sensitivity and Atypical Modulation During Working Memory.",
+      "abstract": ""
+    },
+    {
+      "title": "SymPlex: A Structure-Aware Transformer for Symbolic PDE Solving",
+      "abstract": ""
+    },
+    {
+      "title": "Rank-Learner: Orthogonal Ranking of Treatment Effects",
+      "abstract": ""
+    },
+    {
+      "title": "Acceleration of Atomistic NEGF: Algorithms, Parallelization, and Machine Learning",
+      "abstract": ""
+    },
+    {
+      "title": "NPCNet: Navigator-Driven Pseudo Text for Deep Clustering of Early Sepsis Phenotyping",
+      "abstract": ""
+    },
+    {
+      "title": "Cerebral Venous Thrombosis.",
+      "abstract": "Cerebral venous thrombosis (CVT) is a rare yet serious cerebrovascular condition distinct from arterial stroke. Despite its low prevalence (0.5%-3% of strokes), incidence has risen due to improved awareness and diagnostics. CVT presents variably, commonly with headache, seizures, and focal deficits, making early recognition crucial. Diagnosis relies on CT/MR venography, while anticoagulation remains the mainstay of treatment. Prognosis is generally favorable, though long-term complications such as recurrent thrombosis and cognitive impairment are possible. Emerging research continues to refine diagnostic and management strategies, including anticoagulation choices and treatment of special populations such as pregnant patients."
+    }
+  ]
 }
