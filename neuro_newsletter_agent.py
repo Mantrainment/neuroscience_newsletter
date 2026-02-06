@@ -2,6 +2,7 @@
 Neuroscience Weekly Newsletter Agent
 Scrapes PubMed, arXiv, bioRxiv, and Google Scholar for recent papers.
 Supports feedback via GitHub Issues for rejecting irrelevant papers.
+Uses title + abstract for filtering and query refinement.
 """
 
 import requests
@@ -100,14 +101,30 @@ FEEDBACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedba
 
 # ============== FEEDBACK SYSTEM ==============
 
+# Separator used in GitHub Issue body between title and abstract
+_ISSUE_SEPARATOR = "\n---\n"
+
+
 def load_feedback_file():
-    """Load rejected titles from local feedback.json."""
+    """Load rejected papers from local feedback.json.
+
+    Supports both old format (list of title strings) and new format
+    (list of dicts with 'title' and 'abstract' keys).
+    """
     if not os.path.exists(FEEDBACK_FILE):
         return []
     try:
         with open(FEEDBACK_FILE, "r") as f:
             data = json.load(f)
-        return data.get("rejected_titles", [])
+        raw = data.get("rejected_titles", [])  # key kept for backward compat
+        papers = []
+        for item in raw:
+            if isinstance(item, dict):
+                papers.append({"title": item.get("title", ""), "abstract": item.get("abstract", "")})
+            else:
+                # Old format: plain string = title only
+                papers.append({"title": str(item), "abstract": ""})
+        return papers
     except json.JSONDecodeError as e:
         print("\n" + "!" * 60)
         print("  ERROR: feedback.json is not valid JSON!")
@@ -119,7 +136,11 @@ def load_feedback_file():
 
 
 def load_rejected_from_github():
-    """Load rejected titles from GitHub Issues labeled 'reject'."""
+    """Load rejected papers from GitHub Issues labeled 'reject'.
+
+    New format: issue body contains 'TITLE\\n---\\nABSTRACT'.
+    Old format (backward compat): issue body is just the title.
+    """
     if not GITHUB_REPO or GITHUB_REPO == "your-username/your-repo-name":
         return []
 
@@ -134,32 +155,42 @@ def load_rejected_from_github():
         "per_page": 100
     }
 
-    titles = []
+    papers = []
     try:
         resp = requests.get(url, headers=headers, params=params, timeout=15)
         if resp.status_code == 200:
             for issue in resp.json():
-                # The paper title is in the issue body
                 body = issue.get("body", "")
-                if body:
-                    titles.append(body.strip())
-            print(f"  Loaded {len(titles)} rejected titles from GitHub Issues")
+                if not body:
+                    continue
+                body = body.strip()
+                if _ISSUE_SEPARATOR in body:
+                    # New format: title + abstract
+                    parts = body.split(_ISSUE_SEPARATOR, 1)
+                    papers.append({"title": parts[0].strip(), "abstract": parts[1].strip()})
+                else:
+                    # Old format: title only
+                    papers.append({"title": body, "abstract": ""})
+            print(f"  Loaded {len(papers)} rejected papers from GitHub Issues")
         else:
             print(f"  GitHub Issues API error: {resp.status_code}")
     except Exception as e:
         print(f"  GitHub Issues error: {e}")
 
-    return titles
+    return papers
 
 
 def load_all_rejected():
-    """Load rejected titles from both feedback.json and GitHub Issues."""
-    file_titles = load_feedback_file()
-    github_titles = load_rejected_from_github()
-    all_titles = file_titles + github_titles
-    if all_titles:
-        print(f"  Total rejected titles: {len(all_titles)} ({len(file_titles)} from file, {len(github_titles)} from GitHub)")
-    return all_titles
+    """Load rejected papers from both feedback.json and GitHub Issues.
+
+    Returns list of dicts: [{"title": ..., "abstract": ...}, ...]
+    """
+    file_papers = load_feedback_file()
+    github_papers = load_rejected_from_github()
+    all_papers = file_papers + github_papers
+    if all_papers:
+        print(f"  Total rejected papers: {len(all_papers)} ({len(file_papers)} from file, {len(github_papers)} from GitHub)")
+    return all_papers
 
 
 def _normalize_title(title):
@@ -171,33 +202,37 @@ def _normalize_title(title):
     return t
 
 
-# Cache for rejected title embeddings (computed once per run)
-_rejected_cache = {"titles": None, "embeddings": None}
+# Cache for rejected paper embeddings (computed once per run)
+_rejected_cache = {"papers": None, "embeddings": None, "texts": None}
 
 
-def _get_rejected_embeddings(rejected_titles):
-    """Compute and cache embeddings for rejected titles."""
-    if _rejected_cache["titles"] is not rejected_titles:
-        _rejected_cache["titles"] = rejected_titles
-        if rejected_titles:
+def _get_rejected_embeddings(rejected_papers):
+    """Compute and cache embeddings for rejected papers (title + abstract)."""
+    if _rejected_cache["papers"] is not rejected_papers:
+        _rejected_cache["papers"] = rejected_papers
+        if rejected_papers:
+            # Combine title + abstract for richer semantic matching
+            texts = [f"{p['title']} {p['abstract']}".strip() for p in rejected_papers]
+            _rejected_cache["texts"] = texts
             _rejected_cache["embeddings"] = _EMBED_MODEL.encode(
-                rejected_titles, normalize_embeddings=True
+                texts, normalize_embeddings=True
             )
         else:
+            _rejected_cache["texts"] = None
             _rejected_cache["embeddings"] = None
     return _rejected_cache["embeddings"]
 
 
-def calculate_similarity(new_title, rejected_titles):
-    """Check if new_title is semantically similar to any rejected title using embeddings."""
-    if not rejected_titles:
+def calculate_similarity(new_text, rejected_papers):
+    """Check if new_text is semantically similar to any rejected paper using embeddings."""
+    if not rejected_papers:
         return False
 
-    rejected_embeddings = _get_rejected_embeddings(rejected_titles)
+    rejected_embeddings = _get_rejected_embeddings(rejected_papers)
     if rejected_embeddings is None:
         return False
 
-    new_embedding = _EMBED_MODEL.encode([new_title], normalize_embeddings=True)
+    new_embedding = _EMBED_MODEL.encode([new_text], normalize_embeddings=True)
 
     # Cosine similarity (dot product since embeddings are normalized)
     scores = np.dot(rejected_embeddings, new_embedding.T).flatten()
@@ -205,19 +240,25 @@ def calculate_similarity(new_title, rejected_titles):
     max_score = float(scores[max_idx])
 
     if max_score >= SIMILARITY_THRESHOLD:
-        print(f"    [Semantic Similarity] Rejected: '{new_title}' "
-              f"(score={max_score:.3f} vs '{rejected_titles[max_idx]}')")
+        rejected_title = rejected_papers[max_idx]["title"]
+        print(f"    [Semantic Similarity] Rejected: '{new_text[:80]}...' "
+              f"(score={max_score:.3f} vs '{rejected_title}')")
         return True
     return False
 
 
-def is_rejected(title, rejected_titles):
-    """Check if a paper should be rejected (normalized match or similarity)."""
+def is_rejected(title, abstract, rejected_papers):
+    """Check if a paper should be rejected (normalized match or semantic similarity).
+
+    Uses combined title + abstract for semantic comparison.
+    """
     norm_title = _normalize_title(title)
-    rejected_set = {_normalize_title(t) for t in rejected_titles}
-    if norm_title in rejected_set:
+    rejected_titles_set = {_normalize_title(p["title"]) for p in rejected_papers}
+    if norm_title in rejected_titles_set:
         return True
-    return calculate_similarity(norm_title, rejected_titles)
+    # Combine title + abstract for richer semantic matching
+    combined = f"{title} {abstract}".strip()
+    return calculate_similarity(combined, rejected_papers)
 
 
 # ============== DYNAMIC QUERY REFINEMENT ==============
@@ -243,30 +284,33 @@ STOP_WORDS = {
 }
 
 
-def get_negative_keywords(rejected_titles):
-    """Extract frequent significant words from rejected titles.
+def get_negative_keywords(rejected_papers):
+    """Extract frequent significant words from rejected paper abstracts.
 
+    Abstracts provide much richer and more specific terms than titles alone.
     Returns a list of words that appear in at least MIN_KEYWORD_FREQ
-    rejected titles (excluding stop words), sorted by frequency.
+    rejected papers (excluding stop words), sorted by frequency.
     """
     from collections import Counter
 
-    if not rejected_titles:
+    if not rejected_papers:
         return []
 
     word_counts = Counter()
-    for title in rejected_titles:
-        # Get unique words per title (so one title can't inflate a word's count)
-        words = set(re.findall(r"[a-z0-9]{3,}", title.lower()))
+    for paper in rejected_papers:
+        # Combine title + abstract, but abstract is the main source of specific terms
+        text = f"{paper.get('title', '')} {paper.get('abstract', '')}"
+        # Get unique words per paper (so one paper can't inflate a word's count)
+        words = set(re.findall(r"[a-z0-9]{3,}", text.lower()))
         words -= STOP_WORDS
         word_counts.update(words)
 
-    # Only keep words appearing in enough rejected titles
+    # Only keep words appearing in enough rejected papers
     keywords = [word for word, count in word_counts.most_common()
                 if count >= MIN_KEYWORD_FREQ]
 
     if keywords:
-        print(f"  Negative keywords (freq >= {MIN_KEYWORD_FREQ}): {keywords}")
+        print(f"  Negative keywords (freq >= {MIN_KEYWORD_FREQ}): {keywords[:15]}...")
 
     return keywords
 
@@ -344,15 +388,25 @@ def search_pubmed(query, max_results=5, filter_journals=True):
             title_el = article.find(".//ArticleTitle")
             pmid_el = article.find(".//PMID")
             journal_el = article.find(".//Journal/Title")
+            abstract_el = article.find(".//Abstract/AbstractText")
 
             if title_el is not None and pmid_el is not None:
                 title_text = "".join(title_el.itertext()) if title_el.text is None else title_el.text
                 journal = journal_el.text if journal_el is not None else "PubMed"
 
+                # Collect all abstract parts (some have multiple AbstractText elements)
+                abstract_parts = []
+                for abs_part in article.findall(".//Abstract/AbstractText"):
+                    part_text = "".join(abs_part.itertext())
+                    if part_text:
+                        abstract_parts.append(part_text)
+                abstract = " ".join(abstract_parts)
+
                 papers.append({
                     "title": title_text or "No title",
                     "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid_el.text}/",
-                    "source": journal[:30]
+                    "source": journal[:30],
+                    "abstract": abstract
                 })
         return papers
     except Exception as e:
@@ -389,10 +443,13 @@ def search_arxiv(query, max_results=5):
                     continue
 
             if title is not None and link is not None:
+                summary = entry.find("atom:summary", ns)
+                abstract = " ".join(summary.text.split()) if summary is not None and summary.text else ""
                 papers.append({
                     "title": " ".join(title.text.split()),
                     "url": link.text,
-                    "source": "arXiv"
+                    "source": "arXiv",
+                    "abstract": abstract
                 })
         return papers
     except Exception as e:
@@ -425,7 +482,8 @@ def search_biorxiv(query, max_results=5):
                     papers.append({
                         "title": item["title"],
                         "url": f"https://doi.org/{item['doi']}",
-                        "source": server.capitalize()
+                        "source": server.capitalize(),
+                        "abstract": item.get("abstract", "")
                     })
                     if len(papers) >= max_results:
                         return papers
@@ -460,7 +518,8 @@ def search_google_scholar(query, max_results=3):
             papers.append({
                 "title": result.get("title", "No title"),
                 "url": result.get("link", ""),
-                "source": "Scholar"
+                "source": "Scholar",
+                "abstract": result.get("snippet", "")
             })
         return papers
     except Exception as e:
@@ -473,8 +532,8 @@ def search_google_scholar(query, max_results=3):
 def collect_papers():
     """Collect papers for all categories, filtering rejected ones."""
     newsletter = {}
-    rejected_titles = load_all_rejected()
-    negative_kw = get_negative_keywords(rejected_titles)
+    rejected_papers = load_all_rejected()
+    negative_kw = get_negative_keywords(rejected_papers)
     rejected_count = 0
 
     for category, config in CATEGORIES.items():
@@ -492,7 +551,7 @@ def collect_papers():
             for paper in search_pubmed(refined, 5):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], rejected_titles):
+                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
                         rejected_count += 1
                         continue
                     papers.append(paper)
@@ -501,7 +560,7 @@ def collect_papers():
             for paper in search_arxiv(refined, 4):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], rejected_titles):
+                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
                         rejected_count += 1
                         continue
                     papers.append(paper)
@@ -510,7 +569,7 @@ def collect_papers():
             for paper in search_biorxiv(query, 3):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], rejected_titles):
+                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
                         rejected_count += 1
                         continue
                     papers.append(paper)
@@ -519,7 +578,7 @@ def collect_papers():
             for paper in search_google_scholar(query, 3):
                 title_lower = paper["title"].lower()
                 if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], rejected_titles):
+                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
                         rejected_count += 1
                         continue
                     papers.append(paper)
@@ -584,9 +643,18 @@ def format_newsletter(newsletter):
 
         if data["papers"]:
             for i, paper in enumerate(data["papers"], 1):
-                # [Reject] opens a pre-filled GitHub Issue — just click "Submit new issue"
+                # [Reject] opens a pre-filled GitHub Issue with title + abstract
                 issue_title = url_quote(f"Reject: {paper['title'][:80]}")
-                issue_body = url_quote(paper["title"])
+                # Body: title + separator + abstract (for richer filtering)
+                abstract = paper.get("abstract", "")
+                if abstract:
+                    issue_body_raw = f"{paper['title']}{_ISSUE_SEPARATOR}{abstract}"
+                else:
+                    issue_body_raw = paper["title"]
+                # GitHub URL has a ~8000 char limit; truncate abstract if needed
+                if len(issue_body_raw) > 4000:
+                    issue_body_raw = issue_body_raw[:4000] + "..."
+                issue_body = url_quote(issue_body_raw)
                 reject_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=reject&title={issue_title}&body={issue_body}"
 
                 html += f"""
