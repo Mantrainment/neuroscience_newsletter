@@ -51,6 +51,84 @@
     {
       "title": "Cerebral Venous Thrombosis.",
       "abstract": "Cerebral venous thrombosis (CVT) is a rare yet serious cerebrovascular condition distinct from arterial stroke. Despite its low prevalence (0.5%-3% of strokes), incidence has risen due to improved awareness and diagnostics. CVT presents variably, commonly with headache, seizures, and focal deficits, making early recognition crucial. Diagnosis relies on CT/MR venography, while anticoagulation remains the mainstay of treatment. Prognosis is generally favorable, though long-term complications such as recurrent thrombosis and cognitive impairment are possible. Emerging research continues to refine diagnostic and management strategies, including anticoagulation choices and treatment of special populations such as pregnant patients."
+    },
+    {
+      "title": "ROMAN: Reward-Orchestrated Multi-Head Attention Network for Autonomous Driving System Testing",
+      "abstract": "Automated Driving System (ADS) acts as the brain of autonomous vehicles, responsible for their safety and efficiency. Safe deployment requires thorough testing in diverse real-world scenarios and compliance with traffic laws like speed limits, signal obedience, and right-of-way rules. Violations like running red lights or speeding pose severe safety risks. However, current testing approaches face significant challenges: limited ability to generate complex and high-risk law-breaking scenarios, and failing to account for complex interactions involving multiple vehicles and critical situations. To address these challenges, we propose ROMAN, a novel scenario generation approach for ADS testing that combines a multi-head attention network with a traffic law weighting mechanism. ROMAN is designed to generate high-risk violation scenarios to enable more thorough and targeted ADS evaluation. The multi-head attention mechanism models interactions among vehicles, traffic signals, and other factors. The traffic law weighting mechanism implements a workflow that leverages an LLM-based risk weighting module to evaluate violations based on the two dimensions of severity and occurrence. We have evaluated ROMAN by testing the Baidu Apollo ADS within the CARLA simulation platform and conducting extensive experiments to measure its performance. Experimental results demonstrate that ROMAN surpassed state-of-the-art tools ABLE and LawBreaker by achieving 7.91% higher average violation count than ABLE and 55.96% higher than LawBreaker, while also maintaining greater scenario diversity. In addition, only ROMAN successfully generated violation scenarios for every clause of the input traffic laws, enabling it to identify more high-risk violations than existing approaches."
+    },
+    {
+      "title": "Constraining cosmological simulations with peculiar velocities: a forward-modeling approach",
+      "abstract": "Numerical simulations are a key tool to decipher the dynamics of gravitation. Yet, they fail to spatially reproduce the Universe we observe, limiting comparison between observations and simulations to a statistical level. This is highly problematic for rare, faint or well studied nearby objects that are observed in a single environment. The computational cost of recovering this environment in random simulations is prohibitive. We present Hamlet-PM, a method that enables the constraining of initial conditions for cosmological simulations so as to produce evolved numerical universes that can be directly compared to observations of the Local Universe: constrained simulations. Our method implements the field-level forward modeling of the early-time density field from sparse and noisy measurements of late-time peculiar velocities. The dynamics are integrated with a particle-mesh gravity solver, thus probing the mildly non-linear regime. The code is applied to the Cosmicflows-4 compilation of peculiar velocities up to z < 0.05 (160 Mpc/h). The constrained ICs a re-simulated with a high precision N-body code. A series of one hundred dark-matter only cosmological constrained simulations with a resolution of 512^3 particles in a 500^3 [Mpc/h]3 box is presented. Special attention is given to twelve prominent nearby galaxy clusters, whose simulated counterparts are matched on criteria of mass and separation. We provide a mass estimate constrained by the dynamical environment for each cluster. Field-level forward modeling of the initial conditions produces highly constrained cosmological simulations. Currently, this method already overtakes in quality the pipeline in use in the peculiar-velocity community, although systematic biases still need to be addressed. Furthermore, improving the model is easy thanks to the inherent flexibility of the Bayesian approach."
+    },
+    {
+      "title": "Quantum Computing for Electronic Circular Dichroism Spectrum Prediction of Chiral Molecules",
+      "abstract": "Electronic circular dichroism (ECD) spectroscopy captures the chiroptical response of molecules, enabling absolute configuration assignment that is vital for enantioselective synthesis and drug design. The practical use of ECD spectra in predictive modeling remains restricted, as existing approaches offer limited confidence for chiral discrimination. By contrast, theoretical ECD calculations demand substantial computational effort rooted in electronic structure theory, which constrains their scalability to larger chemically diverse molecules. These limitations underscore the need for computational approaches that retain first principles physical rigor while enabling efficient and scalable prediction. Motivated by recent advances in quantum algorithms for chemistry, we introduce a variational quantum framework combined with the quantum equation of motion formalism to compute molecular properties and predict ECD spectra, implemented within a multi GPU or QPU accelerated hybrid quantum/classical workflow. We demonstrate its efficient applicability on 12 clinically relevant chiral drug molecules accessing expanded active spaces. The proposed framework is assessed by comparison with established classical wavefunction based methods, employing Coupled Cluster Singles and Doubles (CCSD) for ground-state energy benchmarks and Complete Active Space Configuration Interaction (CASCI) as the reference method for excited state energies and chiroptical properties within the same active orbital space. Notably, the quantum computed ECD spectra, obtained from chemically relevant active spaces mapped onto quantum circuits of approximately 20 to 24 qubits, exhibit near quantitative agreement with classical reference calculations, accurately reproducing spectral line shapes, Cotton effect signs, and relative peak intensities."
     }
+  ],
+  "starred_papers": [
+    {
+      "title": "Synaptic-resolution connectomics: towards large brains and connectomic screening.",
+      "abstract": "Neuronal circuits are the key target of both evolutionary and individual adaptation that enable organisms to successfully navigate, predict and shape their environment. Synaptic-resolution connectomics has the ambition to map neuronal circuits at scale to uncover the phylogenetic and ontogenetic implementations realized across the animal kingdom. The past 20 years have seen an ambitious methodological agenda using large-scale 3D electron microscopy and machine learning that have expanded, by a factor of 1,000, the connectomically accessible volumes at synaptic resolution from about 100 µm3 to about 1 mm3. This implies that the field can now move beyond specialized miniature circuits to a large range of local neuropil in mice, including areas of cortical grey matter. Resolving the local cortical circuits of larger brains, including human, and whole-brain synaptic connectomes of small reptiles, rodents, birds and non-human primates is the next major target. In this Review, the critical methodological innovations in brain tissue preparation, ablation or sectioning, imaging and artificial intelligence-based 3D image analysis are discussed alongside remaining challenges, in particular for connectomic mapping of centimetre-scale circuits such as a whole adult mouse brain. Importantly, these advances at the connectomic frontier are now enabling the multifold mapping of comparably smaller circuits. This will enable connectomic screening for the study of complex interactions between evolutionary determinism, individual experience and behavioural performance, as well as age-dependent and pathological alterations of connectomes."
+    },
+    {
+      "title": "A rostral prefrontal mediolateral gradient predicts creativity in frontotemporal dementia.",
+      "abstract": "Creative thinking is a fundamental aspect of human cognition, enabling the production of novel and useful ideas. It is hypothesized to emerge from the binding and reconfiguration of existing knowledge, through the generation of remote semantic associations and their combination in original and meaningful ways, respectively supported by the default mode (DMN) and executive control (ECN) networks. At the crossroads of these two networks, the rostral prefrontal cortex (PFC) is proposed as a key hub for DMN-ECN interactions, possibly supporting the interplay between generative and combinatory creative processes. However, the specific contributions of its medial and lateral subdivisions to creativity remain unclear. In this study, we aimed to characterize the involvement of the rostral PFC in creative cognition through the lens of behavioural variant frontotemporal dementia (bvFTD), a relevant pathological model as it primarily affects the rostral PFC and alters intrinsic connectivity within the DMN and ECN. Using whole-brain voxel-based morphometry, we explored the brain regions critical for the generation and combination of remote semantic associates, respectively, but also for creative abilities, thought to involve both types of processes. Using resting state functional connectivity and gradient mapping techniques, we also explored functional connectivity profiles within the rostral PFC and how connectivity variations within this region predict creative performance. As a result, we found a critical role of the rostromedial PFC for generating remote semantic associations and of the rostrolateral PFC for combining semantic associates, while both regions were critical for creative abilities. Moreover, we showed that intrinsic connectivity of rostral PFC is organized along a mediolateral functional gradient, segregating the rostromedial PFC, connected to the DMN, and the rostrolateral PFC, connected to the ECN. Finally, we showed that the range of this functional gradient, representing the functional differentiation between the ECN and DMN, predicts creative abilities. Overall, this study advances our understanding of creative cognition, its relationships to the anatomical and functional organization of the prefrontal cortex, and its impairment in bvFTD."
+    }
+  ],
+  "sent_history": [
+    "alzheimer and cardiovascular genetic scores and cognition: the finger randomized controlled trial",
+    "what makes memories vivid?",
+    "moving beyond functional connectivity: time-series modeling for fmri-based brain disorder classification",
+    "unsupervised learning of spatially varying regularization for diffeomorphic image registration",
+    "accelerated motion-robust abdominal 3d t1ρ mapping using diamond radial sampling",
+    "alzheimer's clinical research data via r packages: the alzverse",
+    "extinction memories: putting learning into context",
+    "spiking neural networks for eeg signal analysis: from theory to practice",
+    "uncertainty in deep learning for eeg under dataset shifts",
+    "cataract aggravates alzheimer-like pathologies and cognitive deficits in an app/ps1 mouse model",
+    "diagnosing serious \"cannot miss\" causes of non-traumatic headache-thunderclap headache and beyond",
+    "alsuntangled #79: alpha-lipoic acid",
+    "subjective cognitive complaints and cognitive decline in the mauco population-based prospective cohort",
+    "machine learning to infer neurocognitive testing scores among adolescents and young adults with congenital heart disease",
+    "characteristics and mechanisms of cognitive impairment in parkinson disease",
+    "accelerated diffusion basis spectrum imaging with tensor computations",
+    "adaptive behavior with stable synapses",
+    "a synthesis-based mapping of the landscape of neurodegenerative diseases",
+    "association of migraine with increased risk of central serous chorioretinopathy: a retrospective cohort study",
+    "integrating structural and functional brain features to classify major depressive disorder: a multi modal approach",
+    "prevalence of alzheimer's disease pathology in the community",
+    "accelerated cognitive decline in late life depression: the role of amyloid-β, cortico-limbic volume, and white matter hyperintensities",
+    "man-gnn: an interpretable biomarker architecture for neurodevelopmental disorders",
+    "neural signatures of bipolar disorder subtypes: a comprehensive systematic review of neuroimaging studies",
+    "co-activation pattern analysis based on hidden semi-markov model for brain spatiotemporal dynamics",
+    "artificial intelligence and radiogenomics for pediatric cns neoplasms",
+    "multilevel white matter degeneration associated cognitive dysfunction in mild cognitive impairment",
+    "hybrid neural-cognitive models reveal how memory shapes human reward learning",
+    "dissociations and interactions between attention guidance from negative templates maintained in visual working memory and long-term memory",
+    "automated segmentation of complicated cystic renal masses using 3d v-net convolutional neural network on mri",
+    "deep learning approach for dce-mri parameter estimation: evaluating signal intensity and concentration-time curve-based convolution-neural-networks",
+    "repeatability analysis of ica-based harmonization for multi-site mri data using dual projection models",
+    "two-sample mendelian randomization study of gut microbiota and inflammatory proteins: predictive, preventive, and personalized treatment for migraine",
+    "incomplete multi-modal disentanglement learning with application to alzheimer's disease diagnosis",
+    "associations between excessive daytime sleepiness, cognitive impairment, and brain alterations in patients with obstructive sleep apnea",
+    "ex vivo human brain volumetry: validation of mri measurements",
+    "a computational deep fuzzy network-based neuroimaging analysis for brain hemorrhage classification",
+    "sampling of non-gaussian ensemble average propagators for the simulation of diffusion magnetic resonance images",
+    "mri safety considerations for permanent magnet implants in muscle",
+    "automatic determination of glymphatic flow with the dti-alps-index along the principal axis system in native imaging space corrects for head and fiber orientation",
+    "prevalence of dementia and mild cognitive impairment in the mexican population: evidence from mex-cog, a harmonized cognitive assessment protocol study",
+    "neurobiology of trpm channels in pain processing: current advances and future directions",
+    "repeatability of diffusion-weighted arterial spin labeling mri for mapping blood-brain barrier water exchange rate at different postlabel delays",
+    "ignoring distractors takes its (memory) toll",
+    "electroacupuncture alleviates migraine through cxcl13/cxcr5-mediated communication",
+    "optimized t",
+    "regulating negative autobiographical memories: an fmri investigation of reappraisal and distraction in middle-aged and older adults",
+    "a biologically plausible model of astrocyte-neuron networks in random and hub-driven connectivity",
+    "cortical microstructure in persistent post-traumatic headache, migraine and healthy controls: a quantitative magnetic resonance imaging study",
+    "probabilistic mapping and automated segmentation of human brainstem white matter bundles",
+    "machine learning for the diagnosis of fibromyalgia based on magnetic resonance imaging"
+  ],
+  "explored_paths": [
+    "(harmonization OR multi-site) AND (neuroimaging OR MRI)"
   ]
 }
