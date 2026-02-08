@@ -26,6 +26,7 @@ _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
 print("  Model loaded.")
 
 SIMILARITY_THRESHOLD = 0.82
+STAR_BOOST_THRESHOLD = 0.65  # Papers this similar to starred ones get priority
 MIN_KEYWORD_FREQ = 2  # A word must appear in at least this many rejected titles to become a negative keyword
 
 # ============== CONFIGURATION ==============
@@ -43,18 +44,41 @@ EMAIL_CONFIG = {
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Mantrainment/neuroscience_newsletter")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")  # optional, needed for private repos
 
-# Target journals for PubMed filtering
-TARGET_JOURNALS = [
-    "Lancet", "Lancet Neurol", "Nature", "Nat Neurosci", "Nat Rev Neurosci",
-    "Nat Med", "Nat Methods", "Neuron", "Cell", "Brain", "Neuroimage",
-    "Hum Brain Mapp", "JAMA Neurol", "Ann Neurol", "Neurology",
-    "Alzheimers Dement", "Headache", "Cephalalgia", "J Headache Pain"
-]
-
-# Refined categories with specific queries
+# Refined categories with specific queries and target journals
+# Journal names use PubMed Title Abbreviation format for [ta] filtering
 CATEGORIES = {
+    "Cognitive Neuroscience": {
+        "description": "Cognition, consciousness, neuropsychology & neurodegeneration",
+        "journals": [
+            # Core
+            "Nat Hum Behav", "Trends Cogn Sci", "Cognition",
+            "J Exp Psychol Gen",
+            # Specialized
+            "Neurosci Conscious", "Conscious Cogn", "Cortex",
+            "Neuropsychologia", "J Cogn Neurosci",
+        ],
+        "queries": [
+            "(cognitive function OR cognition) AND (neural OR brain) AND (memory OR attention OR executive)",
+            "(neuropsychological assessment OR cognitive testing) AND (dementia OR neurodegeneration)",
+            "(Alzheimer OR frontotemporal OR Parkinson) AND (cognitive decline OR neuropsychological)",
+            "(working memory OR episodic memory) AND (aging OR neurodegeneration)",
+        ]
+    },
     "Clinical Neurology": {
         "description": "Guidelines & management: migraine, dementias, psychotropic drugs",
+        "journals": [
+            # General
+            "Lancet Neurol", "Nat Rev Neurol", "Neurology",
+            "Neurol Clin Pract", "Neurol Genet",
+            "Neurol Neuroimmunol Neuroinflamm",
+            "Brain", "JAMA Neurol", "Ann Neurol",
+            # Dementia
+            "Alzheimers Dement", "Alzheimers Dement (Amst)",
+            "Alzheimers Dement (N Y)", "Alzheimers Res Ther",
+            "Neurobiol Aging", "Acta Neuropathol",
+            # Headache
+            "J Headache Pain", "Cephalalgia", "Headache",
+        ],
         "queries": [
             "(migraine OR headache OR cephalalgia) AND (guideline OR management OR treatment protocol)",
             "(cluster headache OR tension headache) AND (clinical OR therapy)",
@@ -63,26 +87,17 @@ CATEGORIES = {
             "(antipsychotic OR antidepressant OR anxiolytic) AND (neurology OR neurological) AND (guideline OR recommendation)",
         ]
     },
-    "Cognitive Neuroscience": {
-        "description": "Cognition, neuropsychology & neurodegeneration",
-        "queries": [
-            "(cognitive function OR cognition) AND (neural OR brain) AND (memory OR attention OR executive)",
-            "(neuropsychological assessment OR cognitive testing) AND (dementia OR neurodegeneration)",
-            "(Alzheimer OR frontotemporal OR Parkinson) AND (cognitive decline OR neuropsychological)",
-            "(working memory OR episodic memory) AND (aging OR neurodegeneration)",
-        ]
-    },
-    "AI in Neuroscience": {
-        "description": "Machine learning for cognitive neuroscience",
-        "queries": [
-            "(machine learning OR deep learning) AND (cognitive neuroscience OR neuroimaging)",
-            "(neural network OR transformer) AND (brain OR fMRI OR EEG)",
-            "(artificial intelligence) AND (dementia OR Alzheimer) AND (prediction OR classification)",
-            "(convolutional neural network OR random forest) AND (MRI OR brain imaging)",
-        ]
-    },
     "Neuroimaging Analysis": {
         "description": "MRI/PET pipelines & analysis methods",
+        "journals": [
+            # Priority (successor to NeuroImage)
+            "Imaging Neurosci",
+            # Core mapping
+            "Hum Brain Mapp", "Aperture Neuro", "Neuroimage Clin",
+            # MRI physics & engineering
+            "Magn Reson Med", "J Magn Reson Imaging",
+            "IEEE Trans Med Imaging",
+        ],
         "queries": [
             "(fMRI analysis OR MRI preprocessing) AND (pipeline OR method OR tutorial)",
             "(FreeSurfer OR FSL OR SPM OR AFNI OR ANTs) AND (neuroimaging)",
@@ -91,10 +106,120 @@ CATEGORIES = {
             "(structural MRI OR volumetric) AND (analysis method OR segmentation)",
             "(resting state OR functional connectivity) AND (analysis OR preprocessing)",
         ]
+    },
+    "AI in Neuroscience": {
+        "description": "Machine learning for cognitive neuroscience & neurology",
+        "journals": [
+            # Applied AI
+            "Expert Syst Appl", "Artif Intell Med", "NPJ Digit Med",
+            # Theoretical / Modeling
+            "Neural Netw", "IEEE Trans Neural Netw Learn Syst",
+            "J Mach Learn Res", "Med Image Anal",
+        ],
+        "queries": [
+            "(machine learning OR deep learning) AND (cognitive neuroscience OR neuroimaging)",
+            "(neural network OR transformer) AND (brain OR fMRI OR EEG)",
+            "(artificial intelligence) AND (dementia OR Alzheimer) AND (prediction OR classification)",
+            "(convolutional neural network OR random forest) AND (MRI OR brain imaging)",
+        ]
     }
 }
 
 MAX_PAPERS_PER_CATEGORY = 16
+MAX_PREPRINTS_PER_CATEGORY = 3  # Max arXiv + bioRxiv papers per category
+MAX_DISCOVERY_PAPERS = 3        # Papers in the Weekly Discovery section
+
+# ============== SERENDIPITY DISCOVERY ==============
+# Maps core interest terms → adjacent/emerging fields to explore.
+# The agent detects which core terms match the user's profile,
+# then searches for papers in the adjacent fields.
+
+ADJACENCY_MAP = {
+    # Dementia / Alzheimer's adjacent
+    "alzheimer": [
+        "(gut-brain axis OR microbiome) AND (neurodegeneration OR cognition)",
+        "(neuroinflammation OR microglia) AND (Alzheimer OR dementia)",
+        "(sleep disruption OR circadian rhythm) AND (neurodegeneration OR amyloid)",
+        "(epigenetics OR DNA methylation) AND (Alzheimer OR cognitive decline)",
+        "(metabolic syndrome OR insulin resistance) AND (dementia OR brain aging)",
+        "(retinal imaging OR eye biomarker) AND (Alzheimer OR neurodegeneration)",
+        "(extracellular vesicles OR exosomes) AND (neurodegeneration OR biomarker)",
+    ],
+    "dementia": [
+        "(social isolation OR loneliness) AND (cognitive decline OR dementia risk)",
+        "(bilingualism OR cognitive reserve) AND (dementia OR aging brain)",
+        "(hearing loss) AND (cognitive decline OR dementia)",
+        "(air pollution OR environmental exposure) AND (neurodegeneration)",
+    ],
+    "frontotemporal": [
+        "(TDP-43 OR C9orf72) AND (therapy OR clinical trial)",
+        "(language network OR semantic memory) AND (neurodegeneration)",
+        "(behavioral variant) AND (social cognition OR emotion)",
+    ],
+    # Migraine / Headache adjacent
+    "migraine": [
+        "(CGRP OR calcitonin gene) AND (mechanism OR novel therapy)",
+        "(trigeminovascular) AND (pain OR sensitization)",
+        "(cortical spreading depression) AND (aura OR mechanism)",
+        "(ion channel OR channelopathy) AND (headache OR pain)",
+        "(neuromodulation OR vagus nerve stimulation) AND (headache OR migraine)",
+    ],
+    "headache": [
+        "(medication overuse) AND (headache OR chronic pain)",
+        "(trigeminal autonomic cephalalgias) AND (pathophysiology OR treatment)",
+    ],
+    # Cognition adjacent
+    "cognitive": [
+        "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
+        "(embodied cognition OR sensorimotor) AND (brain OR neural)",
+        "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
+        "(default mode network) AND (cognitive function OR aging)",
+        "(brain-computer interface) AND (cognition OR neural decoding)",
+    ],
+    "memory": [
+        "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
+        "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
+        "(adult neurogenesis) AND (hippocampus OR memory)",
+    ],
+    "neuropsychological": [
+        "(digital neuropsychology OR computerized testing) AND (cognition)",
+        "(ecological validity) AND (cognitive assessment OR neuropsychology)",
+    ],
+    # Neuroimaging adjacent
+    "fmri": [
+        "(real-time fMRI OR neurofeedback) AND (clinical OR therapy)",
+        "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
+        "(connectomics OR brain graph theory) AND (method OR analysis)",
+        "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
+    ],
+    "mri": [
+        "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
+        "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
+        "(radiomics) AND (brain OR neuroimaging)",
+    ],
+    "pet": [
+        "(novel PET tracer) AND (brain OR tau OR synaptic)",
+        "(simultaneous PET-MRI) AND (neuroimaging OR method)",
+    ],
+    # AI / ML adjacent
+    "machine learning": [
+        "(federated learning) AND (brain OR neuroimaging OR clinical)",
+        "(explainable AI OR interpretability) AND (neuroimaging OR brain)",
+        "(foundation model OR large language model) AND (neuroscience OR brain)",
+        "(generative model OR diffusion model) AND (brain OR neuroimaging)",
+    ],
+    "deep learning": [
+        "(graph neural network) AND (brain OR connectome)",
+        "(self-supervised learning) AND (neuroimaging OR EEG)",
+        "(vision transformer) AND (medical imaging OR brain)",
+    ],
+    # Parkinson adjacent
+    "parkinson": [
+        "(alpha-synuclein) AND (biomarker OR therapy OR progression)",
+        "(deep brain stimulation) AND (Parkinson OR tremor) AND (advance OR novel)",
+        "(REM sleep behavior disorder) AND (prodromal OR Parkinson)",
+    ],
+}
 
 FEEDBACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedback.json")
 
@@ -105,45 +230,92 @@ FEEDBACK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "feedba
 _ISSUE_SEPARATOR = "\n---\n"
 
 
-def load_feedback_file():
-    """Load rejected papers from local feedback.json.
+def _load_feedback_data():
+    """Load the entire feedback.json file.
 
-    Supports both old format (list of title strings) and new format
-    (list of dicts with 'title' and 'abstract' keys).
+    Returns dict with keys: rejected_titles, starred_papers, sent_history, explored_paths.
     """
     if not os.path.exists(FEEDBACK_FILE):
-        return []
+        return {"rejected_titles": [], "starred_papers": [], "sent_history": [], "explored_paths": []}
     try:
         with open(FEEDBACK_FILE, "r") as f:
             data = json.load(f)
-        raw = data.get("rejected_titles", [])  # key kept for backward compat
-        papers = []
-        for item in raw:
-            if isinstance(item, dict):
-                papers.append({"title": item.get("title", ""), "abstract": item.get("abstract", "")})
-            else:
-                # Old format: plain string = title only
-                papers.append({"title": str(item), "abstract": ""})
-        return papers
+        return {
+            "rejected_titles": data.get("rejected_titles", []),
+            "starred_papers": data.get("starred_papers", []),
+            "sent_history": data.get("sent_history", []),
+            "explored_paths": data.get("explored_paths", []),
+        }
     except json.JSONDecodeError as e:
         print("\n" + "!" * 60)
         print("  ERROR: feedback.json is not valid JSON!")
         print(f"  Details: {e}")
         print("!" * 60 + "\n")
-        return []
+        return {"rejected_titles": [], "starred_papers": [], "sent_history": [], "explored_paths": []}
     except IOError:
-        return []
+        return {"rejected_titles": [], "starred_papers": [], "sent_history": [], "explored_paths": []}
 
 
-def save_feedback_file(papers):
-    """Save rejected papers list to feedback.json."""
-    data = {"rejected_titles": papers}  # key kept for backward compat
+def _save_feedback_data(data):
+    """Save the entire feedback.json file."""
     try:
         with open(FEEDBACK_FILE, "w") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"  Saved {len(papers)} rejected papers to feedback.json")
     except IOError as e:
         print(f"  Error saving feedback.json: {e}")
+
+
+def _parse_paper_list(raw):
+    """Parse a list of papers from feedback.json (handles old and new formats)."""
+    papers = []
+    for item in raw:
+        if isinstance(item, dict):
+            papers.append({"title": item.get("title", ""), "abstract": item.get("abstract", "")})
+        else:
+            papers.append({"title": str(item), "abstract": ""})
+    return papers
+
+
+def load_feedback_file():
+    """Load rejected papers from feedback.json."""
+    data = _load_feedback_data()
+    return _parse_paper_list(data["rejected_titles"])
+
+
+def load_starred_papers():
+    """Load starred (positive feedback) papers from feedback.json."""
+    data = _load_feedback_data()
+    return _parse_paper_list(data["starred_papers"])
+
+
+def load_sent_history():
+    """Load set of normalized titles of all previously sent papers."""
+    data = _load_feedback_data()
+    return set(data["sent_history"])
+
+
+def save_feedback_file(rejected):
+    """Save rejected papers list to feedback.json (preserves other keys)."""
+    data = _load_feedback_data()
+    data["rejected_titles"] = rejected
+    _save_feedback_data(data)
+    print(f"  Saved {len(rejected)} rejected papers to feedback.json")
+
+
+def save_starred_papers(starred):
+    """Save starred papers list to feedback.json (preserves other keys)."""
+    data = _load_feedback_data()
+    data["starred_papers"] = starred
+    _save_feedback_data(data)
+    print(f"  Saved {len(starred)} starred papers to feedback.json")
+
+
+def save_sent_history(sent_titles):
+    """Save sent paper titles to feedback.json (preserves other keys)."""
+    data = _load_feedback_data()
+    data["sent_history"] = list(sent_titles)
+    _save_feedback_data(data)
+    print(f"  Saved {len(sent_titles)} sent titles to history")
 
 
 def _parse_issue_body(body):
@@ -183,11 +355,7 @@ def _close_github_issue(issue_number):
 def sync_and_cleanup():
     """Sync open GitHub Issues into feedback.json, then close them.
 
-    1. Load existing feedback.json
-    2. Fetch all open 'reject' issues from GitHub
-    3. Add new papers to feedback.json (dedup by normalized title)
-    4. Close processed issues on GitHub
-    5. Save updated feedback.json
+    Handles both 'reject' and 'star' labeled issues.
     """
     if not GITHUB_REPO or GITHUB_REPO == "your-username/your-repo-name":
         print("  Skipping sync: GITHUB_REPO not configured")
@@ -195,63 +363,67 @@ def sync_and_cleanup():
 
     print("\n  Syncing GitHub Issues → feedback.json...")
 
-    # Load existing rejected papers
-    existing = load_feedback_file()
-    existing_titles = {_normalize_title(p["title"]) for p in existing}
+    # Load existing data
+    existing_rejected = load_feedback_file()
+    existing_starred = load_starred_papers()
+    rejected_titles = {_normalize_title(p["title"]) for p in existing_rejected}
+    starred_titles = {_normalize_title(p["title"]) for p in existing_starred}
 
-    # Fetch open reject issues
     url = f"https://api.github.com/repos/{GITHUB_REPO}/issues"
     headers = {"Accept": "application/vnd.github.v3+json"}
     if GITHUB_TOKEN:
         headers["Authorization"] = f"token {GITHUB_TOKEN}"
 
-    params = {"labels": "reject", "state": "open", "per_page": 100}
+    # Process both reject and star labels
+    for label, existing_list, existing_set, label_name in [
+        ("reject", existing_rejected, rejected_titles, "rejected"),
+        ("star", existing_starred, starred_titles, "starred"),
+    ]:
+        params = {"labels": label, "state": "open", "per_page": 100}
 
-    try:
-        resp = requests.get(url, headers=headers, params=params, timeout=15)
-        if resp.status_code != 200:
-            print(f"  GitHub API error: {resp.status_code}")
-            return
-        issues = resp.json()
-    except Exception as e:
-        print(f"  GitHub sync error: {e}")
-        return
-
-    if not issues:
-        print("  No open reject issues to sync")
-        return
-
-    new_count = 0
-    closed_count = 0
-
-    for issue in issues:
-        body = issue.get("body", "")
-        if not body:
+        try:
+            resp = requests.get(url, headers=headers, params=params, timeout=15)
+            if resp.status_code != 200:
+                print(f"  GitHub API error ({label}): {resp.status_code}")
+                continue
+            issues = resp.json()
+        except Exception as e:
+            print(f"  GitHub sync error ({label}): {e}")
             continue
 
-        paper = _parse_issue_body(body)
-        norm = _normalize_title(paper["title"])
+        if not issues:
+            print(f"  No open {label} issues to sync")
+            continue
 
-        # Add to list if not already present
-        if norm not in existing_titles:
-            existing.append(paper)
-            existing_titles.add(norm)
-            new_count += 1
+        new_count = 0
+        closed_count = 0
 
-        # Close the issue so it won't be processed again
-        if _close_github_issue(issue["number"]):
-            closed_count += 1
+        for issue in issues:
+            body = issue.get("body", "")
+            if not body:
+                continue
 
-    # Save updated feedback
-    save_feedback_file(existing)
-    print(f"  Sync complete: {new_count} new papers added, {closed_count} issues closed")
+            paper = _parse_issue_body(body)
+            norm = _normalize_title(paper["title"])
+
+            if norm not in existing_set:
+                existing_list.append(paper)
+                existing_set.add(norm)
+                new_count += 1
+
+            if _close_github_issue(issue["number"]):
+                closed_count += 1
+
+        print(f"  {label_name.capitalize()}: {new_count} new, {closed_count} issues closed")
+
+    # Save both lists
+    save_feedback_file(existing_rejected)
+    save_starred_papers(existing_starred)
 
 
 def load_all_rejected():
     """Load rejected papers from feedback.json (primary source).
 
-    GitHub Issues are synced into feedback.json by sync_and_cleanup()
-    before this is called, so we only need to read the local file.
     Returns list of dicts: [{"title": ..., "abstract": ...}, ...]
     """
     papers = load_feedback_file()
@@ -267,6 +439,32 @@ def _normalize_title(title):
     t = t.rstrip(".")
     t = re.sub(r"\s+", " ", t)
     return t
+
+
+def _summarize_abstract(abstract, max_sentences=3):
+    """Extract the first 2-3 sentences from an abstract as a brief summary.
+
+    Uses a regex-based sentence splitter that handles common abbreviations
+    (e.g., 'et al.', 'vs.', 'Dr.', 'Fig.') to avoid false splits.
+    """
+    if not abstract or not abstract.strip():
+        return ""
+
+    text = abstract.strip()
+    # Split on sentence boundaries: period/question/exclamation followed by
+    # space and uppercase letter — but skip common abbreviations
+    abbrevs = r"(?<!\bet al)(?<!\bvs)(?<!\bDr)(?<!\bFig)(?<!\bNo)(?<!\bVol)(?<!\bEq)"
+    sentences = re.split(rf'{abbrevs}(?<=[.!?])\s+(?=[A-Z])', text)
+
+    # Take first max_sentences, ensure at least 2
+    selected = sentences[:max(2, min(max_sentences, len(sentences)))]
+    summary = " ".join(s.strip() for s in selected if s.strip())
+
+    # Cap at ~400 chars to keep emails compact
+    if len(summary) > 400:
+        summary = summary[:397].rsplit(" ", 1)[0] + "..."
+
+    return summary
 
 
 # Cache for rejected paper embeddings (computed once per run)
@@ -326,6 +524,47 @@ def is_rejected(title, abstract, rejected_papers):
     # Combine title + abstract for richer semantic matching
     combined = f"{title} {abstract}".strip()
     return calculate_similarity(combined, rejected_papers)
+
+
+# ============== POSITIVE FEEDBACK (STAR SCORING) ==============
+
+# Cache for starred paper embeddings (computed once per run)
+_starred_cache = {"papers": None, "embeddings": None}
+
+
+def _get_starred_embeddings(starred_papers):
+    """Compute and cache embeddings for starred papers."""
+    if _starred_cache["papers"] is not starred_papers:
+        _starred_cache["papers"] = starred_papers
+        if starred_papers:
+            texts = [f"{p['title']} {p['abstract']}".strip() for p in starred_papers]
+            _starred_cache["embeddings"] = _EMBED_MODEL.encode(
+                texts, normalize_embeddings=True
+            )
+        else:
+            _starred_cache["embeddings"] = None
+    return _starred_cache["embeddings"]
+
+
+def calculate_star_score(title, abstract, starred_papers):
+    """Calculate how similar a paper is to starred (liked) papers.
+
+    Returns a float 0.0-1.0 representing the max similarity to any starred paper.
+    Papers above STAR_BOOST_THRESHOLD are considered relevant to user interests.
+    """
+    if not starred_papers:
+        return 0.0
+
+    starred_embeddings = _get_starred_embeddings(starred_papers)
+    if starred_embeddings is None:
+        return 0.0
+
+    combined = f"{title} {abstract}".strip()
+    new_embedding = _EMBED_MODEL.encode([combined], normalize_embeddings=True)
+
+    scores = np.dot(starred_embeddings, new_embedding.T).flatten()
+    max_score = float(np.max(scores))
+    return max_score
 
 
 # ============== DYNAMIC QUERY REFINEMENT ==============
@@ -407,18 +646,190 @@ def refine_query(query, negative_keywords, max_negatives=3):
     return f"({query}) {not_clause}"
 
 
+# ============== SERENDIPITY DISCOVERY ENGINE ==============
+
+def _extract_interest_profile():
+    """Build a set of core interest terms from starred papers and category queries.
+
+    Returns a set of lowercase terms that represent the user's research profile.
+    """
+    terms = set()
+
+    # From category queries — extract meaningful terms
+    for config in CATEGORIES.values():
+        for query in config["queries"]:
+            # Pull out words from query, skip boolean operators
+            words = re.findall(r"[a-z][a-z\s-]+", query.lower())
+            for phrase in words:
+                phrase = phrase.strip()
+                if phrase and phrase not in {"or", "and", "not"}:
+                    terms.add(phrase)
+
+    # From starred papers — extract significant words
+    starred = load_starred_papers()
+    for paper in starred:
+        text = f"{paper['title']} {paper['abstract']}"
+        words = set(re.findall(r"[a-z]{4,}", text.lower()))
+        words -= STOP_WORDS
+        terms.update(words)
+
+    return terms
+
+
+def _load_explored_paths():
+    """Load the list of previously explored adjacency queries."""
+    data = _load_feedback_data()
+    return set(data.get("explored_paths", []))
+
+
+def _save_explored_path(query):
+    """Record that an adjacency query has been explored."""
+    data = _load_feedback_data()
+    paths = set(data.get("explored_paths", []))
+    paths.add(query)
+    data["explored_paths"] = list(paths)
+    _save_feedback_data(data)
+
+
+def generate_serendipity_queries():
+    """Pick 2-3 adjacent-field queries based on the user's interest profile.
+
+    Logic:
+    1. Extract the user's core interest terms
+    2. Match them against ADJACENCY_MAP keys
+    3. For each matched key, pick one unexplored query
+    4. Skip queries whose topic has been rejected (via rejected paper keywords)
+
+    Returns a list of PubMed query strings.
+    """
+    import random
+
+    interest_terms = _extract_interest_profile()
+    explored = _load_explored_paths()
+    rejected_papers = load_feedback_file()
+
+    # Build a set of "toxic" terms from heavily rejected topics
+    rejected_terms = set()
+    for paper in rejected_papers:
+        words = set(re.findall(r"[a-z]{4,}", paper.get("title", "").lower()))
+        words -= STOP_WORDS
+        rejected_terms.update(words)
+
+    # Find which ADJACENCY_MAP keys match the user's interests
+    matched_keys = []
+    for key in ADJACENCY_MAP:
+        key_lower = key.lower()
+        # Check if this key appears in the user's interest profile
+        if any(key_lower in term or term in key_lower for term in interest_terms):
+            matched_keys.append(key)
+
+    if not matched_keys:
+        # Fallback: use all keys
+        matched_keys = list(ADJACENCY_MAP.keys())
+
+    random.shuffle(matched_keys)
+
+    selected_queries = []
+    for key in matched_keys:
+        if len(selected_queries) >= 3:
+            break
+
+        candidates = ADJACENCY_MAP[key]
+        random.shuffle(candidates)
+
+        for query in candidates:
+            # Skip already explored
+            if query in explored:
+                continue
+
+            # Skip if query overlaps too much with rejected terms
+            query_words = set(re.findall(r"[a-z]{4,}", query.lower())) - STOP_WORDS
+            overlap = query_words & rejected_terms
+            if len(overlap) > 2:
+                continue
+
+            selected_queries.append(query)
+            break
+
+    # If all queries from matched keys are explored, reset and try again
+    if not selected_queries:
+        print("  Discovery: All adjacent paths explored! Resetting exploration history.")
+        data = _load_feedback_data()
+        data["explored_paths"] = []
+        _save_feedback_data(data)
+        # Recursive call with clean slate (only once)
+        return generate_serendipity_queries()
+
+    return selected_queries
+
+
+def collect_discovery_papers(rejected_papers, sent_history):
+    """Search for papers in adjacent fields using serendipity queries.
+
+    Returns a dict suitable for adding to the newsletter.
+    """
+    print("\n  ✨ Weekly Discovery (Serendipity)...")
+
+    queries = generate_serendipity_queries()
+    if not queries:
+        print("  No discovery queries generated")
+        return {"description": "Exploring adjacent neuroscience frontiers", "papers": []}
+
+    papers = []
+    seen_titles = set()
+
+    for query in queries:
+        print(f"  Discovery query: {query[:70]}...")
+
+        # Search PubMed only (peer-reviewed) — no journal filter to cast wider net
+        for paper in search_pubmed(query, max_results=5, filter_journals=False):
+            title_lower = paper["title"].lower()
+            norm = _normalize_title(paper["title"])
+
+            if title_lower in seen_titles:
+                continue
+            if norm in sent_history:
+                continue
+            if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                continue
+
+            papers.append(paper)
+            seen_titles.add(title_lower)
+
+            if len(papers) >= MAX_DISCOVERY_PAPERS:
+                break
+
+        # Record this query as explored
+        _save_explored_path(query)
+
+        if len(papers) >= MAX_DISCOVERY_PAPERS:
+            break
+
+    print(f"  Discovery found: {len(papers)} papers from {len(queries)} queries")
+
+    return {
+        "description": "Exploring adjacent neuroscience frontiers",
+        "papers": papers[:MAX_DISCOVERY_PAPERS]
+    }
+
+
 # ============== DATA SOURCES ==============
 
-def search_pubmed(query, max_results=5, filter_journals=True):
-    """Search PubMed with optional journal filtering."""
+def search_pubmed(query, max_results=5, filter_journals=True, journals=None):
+    """Search PubMed with optional journal filtering.
+
+    Args:
+        journals: list of PubMed journal abbreviations to filter by.
+                  If None and filter_journals=True, searches without filter.
+    """
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
     end_date = datetime.now()
     start_date = end_date - timedelta(days=7)
     date_range = f"{start_date:%Y/%m/%d}:{end_date:%Y/%m/%d}[pdat]"
 
-    if filter_journals:
-        journal_filter = " OR ".join([f'"{j}"[ta]' for j in TARGET_JOURNALS])
+    if filter_journals and journals:
+        journal_filter = " OR ".join([f'"{j}"[ta]' for j in journals])
         full_query = f"({query}) AND ({journal_filter}) AND {date_range}"
     else:
         full_query = f"({query}) AND {date_range}"
@@ -437,7 +848,7 @@ def search_pubmed(query, max_results=5, filter_journals=True):
         ids = resp.json().get("esearchresult", {}).get("idlist", [])
 
         if not ids:
-            if filter_journals:
+            if filter_journals and journals:
                 return search_pubmed(query, max_results, filter_journals=False)
             return []
 
@@ -597,16 +1008,29 @@ def search_google_scholar(query, max_results=3):
 # ============== NEWSLETTER BUILDER ==============
 
 def collect_papers():
-    """Collect papers for all categories, filtering rejected ones."""
+    """Collect papers for all categories, filtering rejected and already-sent ones.
+
+    Papers are scored by similarity to starred papers and sorted by relevance.
+    """
     newsletter = {}
     rejected_papers = load_all_rejected()
+    starred_papers = load_starred_papers()
+    sent_history = load_sent_history()
     negative_kw = get_negative_keywords(rejected_papers)
     rejected_count = 0
+    dedup_count = 0
+
+    if starred_papers:
+        print(f"  Loaded {len(starred_papers)} starred papers for boosting")
+    if sent_history:
+        print(f"  Loaded {len(sent_history)} previously sent titles for dedup")
 
     for category, config in CATEGORIES.items():
         print(f"\n  {category}...")
         papers = []
         seen_titles = set()
+        preprint_count = 0  # Track arXiv + bioRxiv papers in this category
+        category_journals = config.get("journals", [])
 
         for query in config["queries"]:
             refined = refine_query(query, negative_kw)
@@ -615,41 +1039,83 @@ def collect_papers():
             else:
                 print(f"  Query: {query[:50]}...")
 
-            for paper in search_pubmed(refined, 5):
+            for paper in search_pubmed(refined, 5, journals=category_journals):
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
 
             for paper in search_arxiv(refined, 4):
+                if preprint_count >= MAX_PREPRINTS_PER_CATEGORY:
+                    break
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
+                preprint_count += 1
 
             for paper in search_biorxiv(query, 3):
+                if preprint_count >= MAX_PREPRINTS_PER_CATEGORY:
+                    break
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
+                preprint_count += 1
 
             for paper in search_google_scholar(query, 3):
                 title_lower = paper["title"].lower()
-                if title_lower not in seen_titles:
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
+
+        if preprint_count:
+            print(f"  Preprints included: {preprint_count}/{MAX_PREPRINTS_PER_CATEGORY}")
+
+        # Score papers by similarity to starred papers and sort
+        if starred_papers and papers:
+            for paper in papers:
+                paper["_star_score"] = calculate_star_score(
+                    paper["title"], paper.get("abstract", ""), starred_papers
+                )
+            papers.sort(key=lambda p: p["_star_score"], reverse=True)
+
+            # Log boosted papers
+            boosted = [p for p in papers if p["_star_score"] >= STAR_BOOST_THRESHOLD]
+            if boosted:
+                print(f"  ★ {len(boosted)} papers boosted by star similarity")
 
         newsletter[category] = {
             "description": config["description"],
@@ -659,6 +1125,13 @@ def collect_papers():
 
     if rejected_count:
         print(f"\n  Filtered out {rejected_count} rejected papers")
+    if dedup_count:
+        print(f"  Skipped {dedup_count} previously sent papers")
+
+    # Add Weekly Discovery (serendipity) section
+    discovery = collect_discovery_papers(rejected_papers, sent_history)
+    if discovery["papers"]:
+        newsletter["Weekly Discovery"] = discovery
 
     return newsletter
 
@@ -681,6 +1154,9 @@ def format_newsletter(newsletter):
             .source { color: #7f8c8d; font-size: 12px; display: inline-block; margin-top: 8px; background: #ecf0f1; padding: 3px 10px; border-radius: 12px; }
             .reject-link { color: #e74c3c; font-size: 12px; text-decoration: none; margin-left: 10px; cursor: pointer; }
             .reject-link:hover { text-decoration: underline; }
+            .star-link { color: #f39c12; font-size: 12px; text-decoration: none; margin-left: 6px; cursor: pointer; }
+            .star-link:hover { text-decoration: underline; }
+            .abstract { color: #555; font-size: 13px; line-height: 1.5; margin-top: 8px; padding: 8px 10px; background: #f9f9fb; border-radius: 4px; }
             .empty { color: #bdc3c7; font-style: italic; padding: 15px; }
             .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1; color: #95a5a6; font-size: 11px; }
         </style>
@@ -699,7 +1175,8 @@ def format_newsletter(newsletter):
         "Clinical Neurology": "&#x1F3E5;",
         "Cognitive Neuroscience": "&#x1F9E9;",
         "AI in Neuroscience": "&#x1F916;",
-        "Neuroimaging Analysis": "&#x1F52C;"
+        "Neuroimaging Analysis": "&#x1F52C;",
+        "Weekly Discovery": "&#x2728;"
     }
 
     for category, data in newsletter.items():
@@ -710,26 +1187,43 @@ def format_newsletter(newsletter):
 
         if data["papers"]:
             for i, paper in enumerate(data["papers"], 1):
-                # [Reject] opens a pre-filled GitHub Issue with title + abstract
-                issue_title = url_quote(f"Reject: {paper['title'][:80]}")
-                # Body: title + separator + abstract (for richer filtering)
+                # Build issue body (shared between reject and star)
                 abstract = paper.get("abstract", "")
                 if abstract:
                     issue_body_raw = f"{paper['title']}{_ISSUE_SEPARATOR}{abstract}"
                 else:
                     issue_body_raw = paper["title"]
-                # GitHub URL has a ~8000 char limit; truncate abstract if needed
                 if len(issue_body_raw) > 4000:
                     issue_body_raw = issue_body_raw[:4000] + "..."
                 issue_body = url_quote(issue_body_raw)
-                reject_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=reject&title={issue_title}&body={issue_body}"
+
+                # [Reject] link
+                reject_title = url_quote(f"Reject: {paper['title'][:80]}")
+                reject_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=reject&title={reject_title}&body={issue_body}"
+
+                # [Star] link
+                star_title = url_quote(f"Star: {paper['title'][:80]}")
+                star_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=star&title={star_title}&body={issue_body}"
+
+                # Show ★ badge if paper was boosted by star similarity
+                star_score = paper.get("_star_score", 0)
+                star_badge = ""
+                if star_score >= STAR_BOOST_THRESHOLD:
+                    pct = int(star_score * 100)
+                    star_badge = f' <span style="color:#f39c12; font-size:11px;" title="Similar to your starred papers ({pct}% match)">&#x2B50;</span>'
+
+                # Abstract summary (2-3 sentences)
+                summary = _summarize_abstract(paper.get("abstract", ""))
+                summary_html = f'<p class="abstract">{summary}</p>' if summary else ""
 
                 html += f"""
                 <div class="paper">
                     <span style="color:#3498db; font-weight:bold; margin-right:8px;">{i}.</span>
-                    <a class="title-link" href="{paper['url']}" target="_blank">{paper['title']}</a>
+                    <a class="title-link" href="{paper['url']}" target="_blank">{paper['title']}</a>{star_badge}
+                    {summary_html}
                     <span class="source">&#x1F50E; {paper['source']}</span>
-                    <a class="reject-link" href="{reject_url}" target="_blank" title="Open GitHub Issue to reject this paper">[Reject]</a>
+                    <a class="star-link" href="{star_url}" target="_blank" title="Star this paper — similar papers will be prioritized">[&#x2605; Star]</a>
+                    <a class="reject-link" href="{reject_url}" target="_blank" title="Reject — similar papers will be filtered out">[Reject]</a>
                 </div>
                 """
         else:
@@ -739,7 +1233,7 @@ def format_newsletter(newsletter):
         <div class="footer">
             <p>Generated by Neuroscience Newsletter Agent<br>
             Sources: PubMed, arXiv, bioRxiv, medRxiv, Google Scholar<br>
-            <em>Click [Reject] to open a GitHub Issue &mdash; just press "Submit" and the paper will be filtered next run</em></p>
+            <em>[&#x2605; Star] = more like this &bull; [Reject] = less like this &mdash; just press "Submit" on the GitHub Issue</em></p>
         </div>
         </div>
     </body>
@@ -784,7 +1278,15 @@ def run_newsletter():
     # Step 2: Collect, filter, format, and send
     newsletter = collect_papers()
     html = format_newsletter(newsletter)
-    send_email(html)
+    success = send_email(html)
+
+    # Step 3: Record all sent papers in history (prevents duplicates next week)
+    if success:
+        sent_history = load_sent_history()
+        for category_data in newsletter.values():
+            for paper in category_data["papers"]:
+                sent_history.add(_normalize_title(paper["title"]))
+        save_sent_history(sent_history)
 
 
 def main():
