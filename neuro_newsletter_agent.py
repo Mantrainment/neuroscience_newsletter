@@ -1080,7 +1080,7 @@ def collect_papers(feedback_data=None):
             else:
                 print(f"  Query: {query[:50]}...")
 
-            for paper in search_pubmed(refined, 5, journals=category_journals, category_name=category):
+            for paper in search_pubmed(refined, 8, journals=category_journals, category_name=category):
                 title_lower = paper["title"].lower()
                 norm = _normalize_title(paper["title"])
                 if title_lower in seen_titles:
@@ -1142,6 +1142,37 @@ def collect_papers(feedback_data=None):
 
         if preprint_count:
             print(f"  Preprints included: {preprint_count}/{MAX_PREPRINTS_PER_CATEGORY}")
+
+        # --- Backfill: if under target, re-query PubMed with more results & no journal filter ---
+        if len(papers) < MAX_PAPERS_PER_CATEGORY:
+            deficit = MAX_PAPERS_PER_CATEGORY - len(papers)
+            print(f"  Backfill: {len(papers)}/{MAX_PAPERS_PER_CATEGORY} papers — fetching up to {deficit} more...")
+            for query in config["queries"]:
+                if len(papers) >= MAX_PAPERS_PER_CATEGORY:
+                    break
+                refined = refine_query(query, negative_kw)
+                for paper in search_pubmed(refined, max_results=15, filter_journals=False,
+                                           category_name=category):
+                    if len(papers) >= MAX_PAPERS_PER_CATEGORY:
+                        break
+                    title_lower = paper["title"].lower()
+                    norm = _normalize_title(paper["title"])
+                    if title_lower in seen_titles:
+                        continue
+                    if norm in global_seen_titles:
+                        cross_dedup_count += 1
+                        continue
+                    if norm in sent_history:
+                        dedup_count += 1
+                        continue
+                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                        rejected_count += 1
+                        continue
+                    papers.append(paper)
+                    seen_titles.add(title_lower)
+                    global_seen_titles.add(norm)
+            if len(papers) > MAX_PAPERS_PER_CATEGORY - deficit:
+                print(f"  Backfill added {len(papers) - (MAX_PAPERS_PER_CATEGORY - deficit)} papers")
 
         # Score papers by similarity to starred papers and sort
         if starred_papers and papers:
