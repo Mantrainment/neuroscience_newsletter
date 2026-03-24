@@ -1,12 +1,12 @@
 """
 Neuroscience Weekly Newsletter Agent
-Scrapes PubMed, arXiv, and bioRxiv for recent papers.
+Scrapes PubMed, arXiv, bioRxiv, and Google Scholar for recent papers.
 Supports feedback via GitHub Issues for rejecting irrelevant papers.
 Uses title + abstract for filtering and query refinement.
 """
 
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
@@ -15,17 +15,49 @@ import sys
 import json
 import re
 import unicodedata
+import traceback
 from xml.etree import ElementTree as ET
 from urllib.parse import quote as url_quote
 import numpy as np
 from sentence_transformers import SentenceTransformer
+import time as _time
+import functools
 
-# Load embedding model once at startup
-print("  Loading embedding model (all-MiniLM-L6-v2)...")
-_EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-print("  Model loaded.")
 
-SIMILARITY_THRESHOLD = 0.82
+def _retry(max_attempts=3, backoff_base=2):
+    """Retry decorator with exponential backoff for API calls."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_attempts:
+                        print(f"  {func.__name__} failed after {max_attempts} attempts: {e}")
+                        return []
+                    wait = backoff_base ** attempt
+                    print(f"  {func.__name__} attempt {attempt} failed: {e} — retrying in {wait}s...")
+                    _time.sleep(wait)
+            return []
+        return wrapper
+    return decorator
+
+# Lazy-loaded embedding model (initialized on first use)
+_EMBED_MODEL = None
+
+
+def _get_embed_model():
+    """Load embedding model on first call, then reuse."""
+    global _EMBED_MODEL
+    if _EMBED_MODEL is None:
+        print("  Loading embedding model (all-MiniLM-L6-v2)...")
+        _EMBED_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+        print("  Model loaded.")
+    return _EMBED_MODEL
+
+# Lower threshold catches more near-miss irrelevant papers as feedback data grows
+SIMILARITY_THRESHOLD = 0.75
 STAR_BOOST_THRESHOLD = 0.65  # Papers this similar to starred ones get priority
 MIN_KEYWORD_FREQ = 2  # A word must appear in at least this many rejected titles to become a negative keyword
 
@@ -130,7 +162,7 @@ MAX_PREPRINTS_PER_CATEGORY = 3  # Max arXiv + bioRxiv papers per category
 MAX_DISCOVERY_PAPERS = 3        # Papers in the Weekly Discovery section
 
 # ============== SERENDIPITY DISCOVERY ==============
-# Maps core interest terms → adjacent/emerging fields to explore.
+# Maps core interest terms â†’ adjacent/emerging fields to explore.
 # The agent detects which core terms match the user's profile,
 # then searches for papers in the adjacent fields.
 
@@ -361,7 +393,7 @@ def sync_and_cleanup():
         print("  Skipping sync: GITHUB_REPO not configured")
         return
 
-    print("\n  Syncing GitHub Issues → feedback.json...")
+    print("\n  Syncing GitHub Issues â†’ feedback.json...")
 
     # Load existing data
     existing_rejected = load_feedback_file()
@@ -452,8 +484,9 @@ def _summarize_abstract(abstract, max_sentences=3):
 
     text = abstract.strip()
     # Split on sentence boundaries: period/question/exclamation followed by
-    # space and uppercase letter — but skip common abbreviations
-    abbrevs = r"(?<!\bet al)(?<!\bvs)(?<!\bDr)(?<!\bFig)(?<!\bNo)(?<!\bVol)(?<!\bEq)"
+    # space and uppercase letter â€” but skip common abbreviations
+    abbrevs = (r"(?<!\bet al)(?<!\bvs)(?<!\bDr)(?<!\bFig)(?<!\bNo)(?<!\bVol)"
+               r"(?<!\bEq)(?<!\bi\.e)(?<!\be\.g)(?<!\bcf)(?<!\bapprox)")
     sentences = re.split(rf'{abbrevs}(?<=[.!?])\s+(?=[A-Z])', text)
 
     # Take first max_sentences, ensure at least 2
@@ -479,7 +512,7 @@ def _get_rejected_embeddings(rejected_papers):
             # Combine title + abstract for richer semantic matching
             texts = [f"{p['title']} {p['abstract']}".strip() for p in rejected_papers]
             _rejected_cache["texts"] = texts
-            _rejected_cache["embeddings"] = _EMBED_MODEL.encode(
+            _rejected_cache["embeddings"] = _get_embed_model().encode(
                 texts, normalize_embeddings=True
             )
         else:
@@ -497,7 +530,7 @@ def calculate_similarity(new_text, rejected_papers):
     if rejected_embeddings is None:
         return False
 
-    new_embedding = _EMBED_MODEL.encode([new_text], normalize_embeddings=True)
+    new_embedding = _get_embed_model().encode([new_text], normalize_embeddings=True)
 
     # Cosine similarity (dot product since embeddings are normalized)
     scores = np.dot(rejected_embeddings, new_embedding.T).flatten()
@@ -538,7 +571,7 @@ def _get_starred_embeddings(starred_papers):
         _starred_cache["papers"] = starred_papers
         if starred_papers:
             texts = [f"{p['title']} {p['abstract']}".strip() for p in starred_papers]
-            _starred_cache["embeddings"] = _EMBED_MODEL.encode(
+            _starred_cache["embeddings"] = _get_embed_model().encode(
                 texts, normalize_embeddings=True
             )
         else:
@@ -560,7 +593,7 @@ def calculate_star_score(title, abstract, starred_papers):
         return 0.0
 
     combined = f"{title} {abstract}".strip()
-    new_embedding = _EMBED_MODEL.encode([combined], normalize_embeddings=True)
+    new_embedding = _get_embed_model().encode([combined], normalize_embeddings=True)
 
     scores = np.dot(starred_embeddings, new_embedding.T).flatten()
     max_score = float(np.max(scores))
@@ -648,14 +681,14 @@ def refine_query(query, negative_keywords, max_negatives=3):
 
 # ============== SERENDIPITY DISCOVERY ENGINE ==============
 
-def _extract_interest_profile():
+def _extract_interest_profile(starred_papers=None):
     """Build a set of core interest terms from starred papers and category queries.
 
     Returns a set of lowercase terms that represent the user's research profile.
     """
     terms = set()
 
-    # From category queries — extract meaningful terms
+    # From category queries â€” extract meaningful terms
     for config in CATEGORIES.values():
         for query in config["queries"]:
             # Pull out words from query, skip boolean operators
@@ -665,9 +698,10 @@ def _extract_interest_profile():
                 if phrase and phrase not in {"or", "and", "not"}:
                     terms.add(phrase)
 
-    # From starred papers — extract significant words
-    starred = load_starred_papers()
-    for paper in starred:
+    # From starred papers â€” extract significant words
+    if starred_papers is None:
+        starred_papers = load_starred_papers()
+    for paper in starred_papers:
         text = f"{paper['title']} {paper['abstract']}"
         words = set(re.findall(r"[a-z]{4,}", text.lower()))
         words -= STOP_WORDS
@@ -691,7 +725,7 @@ def _save_explored_path(query):
     _save_feedback_data(data)
 
 
-def generate_serendipity_queries():
+def generate_serendipity_queries(starred_papers=None, rejected_papers=None, explored_paths=None):
     """Pick 2-3 adjacent-field queries based on the user's interest profile.
 
     Logic:
@@ -700,13 +734,20 @@ def generate_serendipity_queries():
     3. For each matched key, pick one unexplored query
     4. Skip queries whose topic has been rejected (via rejected paper keywords)
 
+    Args:
+        starred_papers: pre-loaded list (avoids re-reading feedback.json).
+        rejected_papers: pre-loaded list (avoids re-reading feedback.json).
+        explored_paths: pre-loaded set (avoids re-reading feedback.json).
+
     Returns a list of PubMed query strings.
     """
     import random
 
-    interest_terms = _extract_interest_profile()
-    explored = _load_explored_paths()
-    rejected_papers = load_feedback_file()
+    interest_terms = _extract_interest_profile(starred_papers)
+    if explored_paths is None:
+        explored_paths = _load_explored_paths()
+    if rejected_papers is None:
+        rejected_papers = load_feedback_file()
 
     # Build a set of "toxic" terms from heavily rejected topics
     rejected_terms = set()
@@ -727,7 +768,24 @@ def generate_serendipity_queries():
         # Fallback: use all keys
         matched_keys = list(ADJACENCY_MAP.keys())
 
+    # Weight matched keys by recency of starred papers.
+    # Later entries in starred_papers are more recent, so higher index = higher weight.
+    key_weights = {k: 0.0 for k in matched_keys}
+    if starred_papers:
+        for idx, paper in enumerate(starred_papers):
+            recency = (idx + 1) / len(starred_papers)  # 0→1, most recent = 1.0
+            text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
+            for key in matched_keys:
+                if key.lower() in text:
+                    key_weights[key] = max(key_weights[key], recency)
+
+    # Sort by recency weight (desc), break ties randomly
     random.shuffle(matched_keys)
+    matched_keys.sort(key=lambda k: key_weights[k], reverse=True)
+
+    if any(key_weights[k] > 0 for k in matched_keys):
+        top = [(k, f"{key_weights[k]:.2f}") for k in matched_keys[:5] if key_weights[k] > 0]
+        print(f"  Discovery keys weighted by recency: {top}")
 
     selected_queries = []
     for key in matched_keys:
@@ -739,7 +797,7 @@ def generate_serendipity_queries():
 
         for query in candidates:
             # Skip already explored
-            if query in explored:
+            if query in explored_paths:
                 continue
 
             # Skip if query overlaps too much with rejected terms
@@ -758,19 +816,25 @@ def generate_serendipity_queries():
         data["explored_paths"] = []
         _save_feedback_data(data)
         # Recursive call with clean slate (only once)
-        return generate_serendipity_queries()
+        return generate_serendipity_queries(starred_papers, rejected_papers, explored_paths=set())
 
     return selected_queries
 
 
-def collect_discovery_papers(rejected_papers, sent_history):
+def collect_discovery_papers(rejected_papers, sent_history, starred_papers, explored_paths, global_seen_titles=None):
     """Search for papers in adjacent fields using serendipity queries.
+
+    Args:
+        global_seen_titles: set of normalized titles already included in other
+            categories, used to prevent cross-section duplicates.
 
     Returns a dict suitable for adding to the newsletter.
     """
-    print("\n  ✨ Weekly Discovery (Serendipity)...")
+    if global_seen_titles is None:
+        global_seen_titles = set()
+    print("\n  âœ¨ Weekly Discovery (Serendipity)...")
 
-    queries = generate_serendipity_queries()
+    queries = generate_serendipity_queries(starred_papers, rejected_papers, explored_paths)
     if not queries:
         print("  No discovery queries generated")
         return {"description": "Exploring adjacent neuroscience frontiers", "papers": []}
@@ -781,12 +845,14 @@ def collect_discovery_papers(rejected_papers, sent_history):
     for query in queries:
         print(f"  Discovery query: {query[:70]}...")
 
-        # Search PubMed only (peer-reviewed) — no journal filter to cast wider net
+        # Search PubMed only (peer-reviewed) â€” no journal filter to cast wider net
         for paper in search_pubmed(query, max_results=5, filter_journals=False):
             title_lower = paper["title"].lower()
             norm = _normalize_title(paper["title"])
 
             if title_lower in seen_titles:
+                continue
+            if norm in global_seen_titles:
                 continue
             if norm in sent_history:
                 continue
@@ -795,6 +861,7 @@ def collect_discovery_papers(rejected_papers, sent_history):
 
             papers.append(paper)
             seen_titles.add(title_lower)
+            global_seen_titles.add(norm)
 
             if len(papers) >= MAX_DISCOVERY_PAPERS:
                 break
@@ -815,12 +882,14 @@ def collect_discovery_papers(rejected_papers, sent_history):
 
 # ============== DATA SOURCES ==============
 
-def search_pubmed(query, max_results=5, filter_journals=True, journals=None):
+@_retry()
+def search_pubmed(query, max_results=5, filter_journals=True, journals=None, category_name=None):
     """Search PubMed with optional journal filtering.
 
     Args:
         journals: list of PubMed journal abbreviations to filter by.
                   If None and filter_journals=True, searches without filter.
+        category_name: optional category label for log messages.
     """
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
@@ -843,55 +912,54 @@ def search_pubmed(query, max_results=5, filter_journals=True, journals=None):
         "retmode": "json"
     }
 
-    try:
-        resp = requests.get(search_url, params=params, timeout=15)
-        ids = resp.json().get("esearchresult", {}).get("idlist", [])
+    resp = requests.get(search_url, params=params, timeout=15)
+    ids = resp.json().get("esearchresult", {}).get("idlist", [])
 
-        if not ids:
-            if filter_journals and journals:
-                return search_pubmed(query, max_results, filter_journals=False)
-            return []
-
-        fetch_url = f"{base_url}/efetch.fcgi"
-        fetch_params = {
-            "db": "pubmed",
-            "id": ",".join(ids),
-            "retmode": "xml"
-        }
-        resp = requests.get(fetch_url, params=fetch_params, timeout=15)
-
-        papers = []
-        root = ET.fromstring(resp.content)
-        for article in root.findall(".//PubmedArticle"):
-            title_el = article.find(".//ArticleTitle")
-            pmid_el = article.find(".//PMID")
-            journal_el = article.find(".//Journal/Title")
-            abstract_el = article.find(".//Abstract/AbstractText")
-
-            if title_el is not None and pmid_el is not None:
-                title_text = "".join(title_el.itertext()) if title_el.text is None else title_el.text
-                journal = journal_el.text if journal_el is not None else "PubMed"
-
-                # Collect all abstract parts (some have multiple AbstractText elements)
-                abstract_parts = []
-                for abs_part in article.findall(".//Abstract/AbstractText"):
-                    part_text = "".join(abs_part.itertext())
-                    if part_text:
-                        abstract_parts.append(part_text)
-                abstract = " ".join(abstract_parts)
-
-                papers.append({
-                    "title": title_text or "No title",
-                    "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid_el.text}/",
-                    "source": journal[:30],
-                    "abstract": abstract
-                })
-        return papers
-    except Exception as e:
-        print(f"  PubMed error: {e}")
+    if not ids:
+        if filter_journals and journals:
+            cat_label = f" [{category_name}]" if category_name else ""
+            print(f"  ⚠ [Journal fallback]{cat_label} 0 results with journal filter â†' falling back to unfiltered. Query: {query[:80]}")
+            return search_pubmed(query, max_results, filter_journals=False, category_name=category_name)
         return []
 
+    fetch_url = f"{base_url}/efetch.fcgi"
+    fetch_params = {
+        "db": "pubmed",
+        "id": ",".join(ids),
+        "retmode": "xml"
+    }
+    resp = requests.get(fetch_url, params=fetch_params, timeout=15)
 
+    papers = []
+    root = ET.fromstring(resp.content)
+    for article in root.findall(".//PubmedArticle"):
+        title_el = article.find(".//ArticleTitle")
+        pmid_el = article.find(".//PMID")
+        journal_el = article.find(".//Journal/Title")
+        abstract_el = article.find(".//Abstract/AbstractText")
+
+        if title_el is not None and pmid_el is not None:
+            title_text = "".join(title_el.itertext()) if title_el.text is None else title_el.text
+            journal = journal_el.text if journal_el is not None else "PubMed"
+
+            # Collect all abstract parts (some have multiple AbstractText elements)
+            abstract_parts = []
+            for abs_part in article.findall(".//Abstract/AbstractText"):
+                part_text = "".join(abs_part.itertext())
+                if part_text:
+                    abstract_parts.append(part_text)
+            abstract = " ".join(abstract_parts)
+
+            papers.append({
+                "title": title_text or "No title",
+                "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid_el.text}/",
+                "source": journal[:30],
+                "abstract": abstract
+            })
+    return papers
+
+
+@_retry()
 def search_arxiv(query, max_results=5):
     """Search arXiv for neuroscience/ML papers."""
     url = "http://export.arxiv.org/api/query"
@@ -904,37 +972,35 @@ def search_arxiv(query, max_results=5):
         "sortOrder": "descending"
     }
 
-    try:
-        resp = requests.get(url, params=params, timeout=15)
-        root = ET.fromstring(resp.content)
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
+    resp = requests.get(url, params=params, timeout=15)
+    root = ET.fromstring(resp.content)
+    ns = {"atom": "http://www.w3.org/2005/Atom"}
 
-        papers = []
-        for entry in root.findall("atom:entry", ns):
-            title = entry.find("atom:title", ns)
-            link = entry.find("atom:id", ns)
-            published = entry.find("atom:published", ns)
+    now_utc = datetime.now(timezone.utc)
+    papers = []
+    for entry in root.findall("atom:entry", ns):
+        title = entry.find("atom:title", ns)
+        link = entry.find("atom:id", ns)
+        published = entry.find("atom:published", ns)
 
-            if published is not None:
-                pub_date = datetime.fromisoformat(published.text.replace("Z", "+00:00"))
-                if (datetime.now(pub_date.tzinfo) - pub_date).days > 7:
-                    continue
+        if published is not None:
+            pub_date = datetime.fromisoformat(published.text.replace("Z", "+00:00"))
+            if (now_utc - pub_date).days > 7:
+                continue
 
-            if title is not None and link is not None:
-                summary = entry.find("atom:summary", ns)
-                abstract = " ".join(summary.text.split()) if summary is not None and summary.text else ""
-                papers.append({
-                    "title": " ".join(title.text.split()),
-                    "url": link.text,
-                    "source": "arXiv",
-                    "abstract": abstract
-                })
-        return papers
-    except Exception as e:
-        print(f"  arXiv error: {e}")
-        return []
+        if title is not None and link is not None:
+            summary = entry.find("atom:summary", ns)
+            abstract = " ".join(summary.text.split()) if summary is not None and summary.text else ""
+            papers.append({
+                "title": " ".join(title.text.split()),
+                "url": link.text,
+                "source": "arXiv",
+                "abstract": abstract
+            })
+    return papers
 
 
+@_retry()
 def search_biorxiv(query, max_results=5):
     """Search bioRxiv/medRxiv for preprints."""
     end_date = datetime.now()
@@ -945,46 +1011,96 @@ def search_biorxiv(query, max_results=5):
     for server in ["biorxiv", "medrxiv"]:
         url = f"https://api.biorxiv.org/details/{server}/{start_date:%Y-%m-%d}/{end_date:%Y-%m-%d}/0/100"
 
-        try:
-            resp = requests.get(url, timeout=15)
-            data = resp.json()
+        resp = requests.get(url, timeout=15)
+        data = resp.json()
 
-            query_terms = query.lower().split(" AND ")[0].replace("(", "").replace(")", "").split(" OR ")
+        query_terms = query.lower().split(" AND ")[0].replace("(", "").replace(")", "").split(" OR ")
 
-            for item in data.get("collection", []):
-                title_lower = item.get("title", "").lower()
-                abstract_lower = item.get("abstract", "").lower()
+        for item in data.get("collection", []):
+            title_lower = item.get("title", "").lower()
+            abstract_lower = item.get("abstract", "").lower()
 
-                if any(term.strip() in title_lower or term.strip() in abstract_lower
-                       for term in query_terms if len(term.strip()) > 3):
-                    papers.append({
-                        "title": item["title"],
-                        "url": f"https://doi.org/{item['doi']}",
-                        "source": server.capitalize(),
-                        "abstract": item.get("abstract", "")
-                    })
-                    if len(papers) >= max_results:
-                        return papers
-        except Exception as e:
-            print(f"  {server} error: {e}")
+            if any(term.strip() in title_lower or term.strip() in abstract_lower
+                   for term in query_terms if len(term.strip()) > 3):
+                papers.append({
+                    "title": item["title"],
+                    "url": f"https://doi.org/{item['doi']}",
+                    "source": server.capitalize(),
+                    "abstract": item.get("abstract", "")
+                })
+                if len(papers) >= max_results:
+                    return papers
 
+    return papers
+
+
+@_retry()
+def search_google_scholar(query, max_results=3):
+    """Search Google Scholar via SerpAPI (optional - set SERPAPI_KEY)."""
+    api_key = os.getenv("SERPAPI_KEY")
+    if not api_key:
+        return []
+
+    url = "https://serpapi.com/search"
+    params = {
+        "engine": "google_scholar",
+        "q": query,
+        "api_key": api_key,
+        "num": max_results,
+        "as_ylo": datetime.now().year,
+        "scisbd": 1
+    }
+
+    resp = requests.get(url, params=params, timeout=15)
+    data = resp.json()
+
+    # Known preprint domains to exclude
+    _PREPRINT_DOMAINS = ("arxiv.org", "biorxiv.org", "medrxiv.org",
+                         "ssrn.com", "preprints.org", "researchsquare.com",
+                         "chemrxiv.org", "osf.io/preprints")
+
+    papers = []
+    for result in data.get("organic_results", []):
+        link = result.get("link", "")
+        # Skip preprints — they are already covered (and capped) by dedicated sources
+        if any(domain in link.lower() for domain in _PREPRINT_DOMAINS):
+            print(f"    [Scholar] Skipped preprint: {link}")
+            continue
+        papers.append({
+            "title": result.get("title", "No title"),
+            "url": link,
+            "source": "Scholar",
+            "abstract": result.get("snippet", "")
+        })
     return papers
 
 
 # ============== NEWSLETTER BUILDER ==============
 
-def collect_papers():
+def collect_papers(feedback_data=None):
     """Collect papers for all categories, filtering rejected and already-sent ones.
 
     Papers are scored by similarity to starred papers and sorted by relevance.
+
+    Args:
+        feedback_data: pre-loaded feedback dict (avoids re-reading feedback.json).
     """
+    if feedback_data is None:
+        feedback_data = _load_feedback_data()
+
     newsletter = {}
-    rejected_papers = load_all_rejected()
-    starred_papers = load_starred_papers()
-    sent_history = load_sent_history()
+    rejected_papers = _parse_paper_list(feedback_data["rejected_titles"])
+    starred_papers = _parse_paper_list(feedback_data["starred_papers"])
+    sent_history = set(feedback_data["sent_history"])
+    explored_paths = set(feedback_data.get("explored_paths", []))
     negative_kw = get_negative_keywords(rejected_papers)
+
+    if rejected_papers:
+        print(f"  Loaded {len(rejected_papers)} rejected papers from feedback.json")
     rejected_count = 0
     dedup_count = 0
+    cross_dedup_count = 0
+    global_seen_titles = set()  # Cross-category dedup: prevents same paper in multiple sections
 
     if starred_papers:
         print(f"  Loaded {len(starred_papers)} starred papers for boosting")
@@ -994,7 +1110,7 @@ def collect_papers():
     for category, config in CATEGORIES.items():
         print(f"\n  {category}...")
         papers = []
-        seen_titles = set()
+        seen_titles = set()  # Within-category dedup (uses title_lower)
         preprint_count = 0  # Track arXiv + bioRxiv papers in this category
         category_journals = config.get("journals", [])
 
@@ -1005,10 +1121,13 @@ def collect_papers():
             else:
                 print(f"  Query: {query[:50]}...")
 
-            for paper in search_pubmed(refined, 5, journals=category_journals):
+            for paper in search_pubmed(refined, 5, journals=category_journals, category_name=category):
                 title_lower = paper["title"].lower()
                 norm = _normalize_title(paper["title"])
                 if title_lower in seen_titles:
+                    continue
+                if norm in global_seen_titles:
+                    cross_dedup_count += 1
                     continue
                 if norm in sent_history:
                     dedup_count += 1
@@ -1018,6 +1137,7 @@ def collect_papers():
                     continue
                 papers.append(paper)
                 seen_titles.add(title_lower)
+                global_seen_titles.add(norm)
 
             for paper in search_arxiv(refined, 4):
                 if preprint_count >= MAX_PREPRINTS_PER_CATEGORY:
@@ -1026,6 +1146,9 @@ def collect_papers():
                 norm = _normalize_title(paper["title"])
                 if title_lower in seen_titles:
                     continue
+                if norm in global_seen_titles:
+                    cross_dedup_count += 1
+                    continue
                 if norm in sent_history:
                     dedup_count += 1
                     continue
@@ -1034,6 +1157,7 @@ def collect_papers():
                     continue
                 papers.append(paper)
                 seen_titles.add(title_lower)
+                global_seen_titles.add(norm)
                 preprint_count += 1
 
             for paper in search_biorxiv(query, 3):
@@ -1043,6 +1167,9 @@ def collect_papers():
                 norm = _normalize_title(paper["title"])
                 if title_lower in seen_titles:
                     continue
+                if norm in global_seen_titles:
+                    cross_dedup_count += 1
+                    continue
                 if norm in sent_history:
                     dedup_count += 1
                     continue
@@ -1051,7 +1178,26 @@ def collect_papers():
                     continue
                 papers.append(paper)
                 seen_titles.add(title_lower)
+                global_seen_titles.add(norm)
                 preprint_count += 1
+
+            for paper in search_google_scholar(query, 3):
+                title_lower = paper["title"].lower()
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in global_seen_titles:
+                    cross_dedup_count += 1
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
+                global_seen_titles.add(norm)
 
         if preprint_count:
             print(f"  Preprints included: {preprint_count}/{MAX_PREPRINTS_PER_CATEGORY}")
@@ -1067,7 +1213,7 @@ def collect_papers():
             # Log boosted papers
             boosted = [p for p in papers if p["_star_score"] >= STAR_BOOST_THRESHOLD]
             if boosted:
-                print(f"  ★ {len(boosted)} papers boosted by star similarity")
+                print(f"  â˜… {len(boosted)} papers boosted by star similarity")
 
         newsletter[category] = {
             "description": config["description"],
@@ -1079,16 +1225,33 @@ def collect_papers():
         print(f"\n  Filtered out {rejected_count} rejected papers")
     if dedup_count:
         print(f"  Skipped {dedup_count} previously sent papers")
+    if cross_dedup_count:
+        print(f"  Skipped {cross_dedup_count} cross-category duplicates")
 
     # Add Weekly Discovery (serendipity) section
-    discovery = collect_discovery_papers(rejected_papers, sent_history)
+    discovery = collect_discovery_papers(rejected_papers, sent_history, starred_papers, explored_paths, global_seen_titles)
     if discovery["papers"]:
         newsletter["Weekly Discovery"] = discovery
 
-    return newsletter
+    # Count totals for stats
+    total_papers = sum(len(d["papers"]) for d in newsletter.values())
+    star_boosted = sum(
+        1 for d in newsletter.values() for p in d["papers"]
+        if p.get("_star_score", 0) >= STAR_BOOST_THRESHOLD
+    )
+
+    stats = {
+        "total_papers": total_papers,
+        "rejected_filtered": rejected_count,
+        "dedup_skipped": dedup_count,
+        "cross_dedup_skipped": cross_dedup_count,
+        "star_boosted": star_boosted,
+    }
+
+    return newsletter, stats
 
 
-def format_newsletter(newsletter):
+def format_newsletter(newsletter, stats=None):
     """Format newsletter as HTML with Reject links via GitHub Issues."""
     date_str = datetime.now().strftime("%B %d, %Y")
 
@@ -1157,7 +1320,7 @@ def format_newsletter(newsletter):
                 star_title = url_quote(f"Star: {paper['title'][:80]}")
                 star_url = f"https://github.com/{GITHUB_REPO}/issues/new?labels=star&title={star_title}&body={issue_body}"
 
-                # Show ★ badge if paper was boosted by star similarity
+                # Show â˜… badge if paper was boosted by star similarity
                 star_score = paper.get("_star_score", 0)
                 star_badge = ""
                 if star_score >= STAR_BOOST_THRESHOLD:
@@ -1174,18 +1337,32 @@ def format_newsletter(newsletter):
                     <a class="title-link" href="{paper['url']}" target="_blank">{paper['title']}</a>{star_badge}
                     {summary_html}
                     <span class="source">&#x1F50E; {paper['source']}</span>
-                    <a class="star-link" href="{star_url}" target="_blank" title="Star this paper — similar papers will be prioritized">[&#x2605; Star]</a>
-                    <a class="reject-link" href="{reject_url}" target="_blank" title="Reject — similar papers will be filtered out">[Reject]</a>
+                    <a class="star-link" href="{star_url}" target="_blank" title="Star this paper â€” similar papers will be prioritized">[&#x2605; Star]</a>
+                    <a class="reject-link" href="{reject_url}" target="_blank" title="Reject â€” similar papers will be filtered out">[Reject]</a>
                 </div>
                 """
         else:
             html += '<p class="empty">No new papers this week.</p>'
 
-    html += """
+    # Build stats line for footer
+    stats_html = ""
+    if stats:
+        parts = [f"&#x1F4CA; {stats['total_papers']} papers sent"]
+        if stats.get("rejected_filtered"):
+            parts.append(f"{stats['rejected_filtered']} filtered by rejection")
+        if stats.get("dedup_skipped") or stats.get("cross_dedup_skipped"):
+            dedup_total = stats.get("dedup_skipped", 0) + stats.get("cross_dedup_skipped", 0)
+            parts.append(f"{dedup_total} deduplicated")
+        if stats.get("star_boosted"):
+            parts.append(f"{stats['star_boosted']} star-boosted")
+        stats_html = f'<p style="margin-top:8px;">{" &bull; ".join(parts)}</p>'
+
+    html += f"""
         <div class="footer">
             <p>Generated by Neuroscience Newsletter Agent<br>
-            Sources: PubMed, arXiv, bioRxiv, medRxiv<br>
+            Sources: PubMed, arXiv, bioRxiv, medRxiv, Google Scholar<br>
             <em>[&#x2605; Star] = more like this &bull; [Reject] = less like this &mdash; just press "Submit" on the GitHub Issue</em></p>
+            {stats_html}
         </div>
         </div>
     </body>
@@ -1219,31 +1396,88 @@ def send_email(html_content):
         return False
 
 
-def run_newsletter():
+def _send_error_email(error_traceback):
+    """Send a short failure notification email with the traceback."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"⚠ Newsletter FAILED - {datetime.now():%B %d, %Y}"
+    msg["From"] = EMAIL_CONFIG["sender"]
+    msg["To"] = EMAIL_CONFIG["recipient"]
+
+    html = f"""
+    <html><body style="font-family: Arial, sans-serif; padding: 20px;">
+    <h2 style="color: #e74c3c;">&#x26A0; Newsletter run failed</h2>
+    <p><strong>Time:</strong> {datetime.now():%Y-%m-%d %H:%M:%S}</p>
+    <pre style="background: #f8f8f8; padding: 15px; border-radius: 5px;
+                font-size: 13px; overflow-x: auto;">{error_traceback}</pre>
+    <p style="color: #95a5a6; font-size: 12px;">Check the GitHub Actions log for full details.</p>
+    </body></html>
+    """
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        if EMAIL_CONFIG.get("use_ssl", False):
+            with smtplib.SMTP_SSL(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
+                server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
+                server.sendmail(EMAIL_CONFIG["sender"], EMAIL_CONFIG["recipient"], msg.as_string())
+        else:
+            with smtplib.SMTP(EMAIL_CONFIG["smtp_server"], EMAIL_CONFIG["smtp_port"]) as server:
+                server.starttls()
+                server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
+                server.sendmail(EMAIL_CONFIG["sender"], EMAIL_CONFIG["recipient"], msg.as_string())
+        print("  Error notification email sent.")
+    except Exception as mail_err:
+        print(f"  Could not send error email: {mail_err}")
+
+
+def run_newsletter(dry_run=False):
     print(f"\n{'='*50}")
     print(f"  Neuroscience Newsletter - {datetime.now():%Y-%m-%d %H:%M}")
+    if dry_run:
+        print("  *** DRY RUN — no email will be sent ***")
     print('='*50)
 
-    # Step 1: Sync GitHub Issues into feedback.json and close them
-    sync_and_cleanup()
+    try:
+        # Step 1: Sync GitHub Issues into feedback.json and close them
+        if not dry_run:
+            sync_and_cleanup()
 
-    # Step 2: Collect, filter, format, and send
-    newsletter = collect_papers()
-    html = format_newsletter(newsletter)
-    success = send_email(html)
+        # Step 2: Load feedback once for the entire run
+        feedback_data = _load_feedback_data()
 
-    # Step 3: Record all sent papers in history (prevents duplicates next week)
-    if success:
-        sent_history = load_sent_history()
-        for category_data in newsletter.values():
-            for paper in category_data["papers"]:
-                sent_history.add(_normalize_title(paper["title"]))
-        save_sent_history(sent_history)
+        # Step 3: Collect, filter, format, and send
+        newsletter, stats = collect_papers(feedback_data)
+        html = format_newsletter(newsletter, stats)
+
+        if dry_run:
+            out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    f"newsletter_preview_{datetime.now():%Y%m%d_%H%M%S}.html")
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(html)
+            print(f"\n  Dry-run saved to: {out_path}")
+            success = True
+        else:
+            success = send_email(html)
+
+        # Step 4: Record all sent papers in history (prevents duplicates next week)
+        if success:
+            sent_history = set(feedback_data["sent_history"])
+            for category_data in newsletter.values():
+                for paper in category_data["papers"]:
+                    sent_history.add(_normalize_title(paper["title"]))
+            save_sent_history(sent_history)
+
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"\n  FATAL ERROR:\n{tb}")
+        _send_error_email(tb)
+        raise  # Re-raise so GitHub Actions marks the run as failed
 
 
 def main():
-    if "--run-once" in sys.argv:
-        run_newsletter()
+    dry_run = "--dry-run" in sys.argv
+
+    if "--run-once" in sys.argv or dry_run:
+        run_newsletter(dry_run=dry_run)
         return
 
     try:
