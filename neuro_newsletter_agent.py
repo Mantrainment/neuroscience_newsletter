@@ -1,6 +1,6 @@
 """
 Neuroscience Weekly Newsletter Agent
-Scrapes PubMed, arXiv, and bioRxiv/medRxiv for recent papers.
+Scrapes PubMed, arXiv, bioRxiv, and Google Scholar for recent papers.
 Supports feedback via GitHub Issues for rejecting irrelevant papers.
 Uses title + abstract for filtering and query refinement.
 """
@@ -76,8 +76,99 @@ EMAIL_CONFIG = {
 GITHUB_REPO = os.getenv("GITHUB_REPO", "Mantrainment/neuroscience_newsletter")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")  # optional, needed for private repos
 
+# ============== JOURNAL TIERS ==============
+# Tier 1 = flagship / highest-impact venues. Tier 2 = strong specialist journals.
+# Weights are ADDED to the star-similarity score, so a Tier-1 paper outranks a
+# Tier-3 paper of equal semantic relevance.
+# Keys are PubMed ISO abbreviations (lowercased for matching).
+
+TIER1_JOURNALS = {
+    # Flagship general science / medicine
+    "nature", "science", "cell", "lancet", "n engl j med", "jama", "bmj",
+    "nat med", "nat neurosci", "nat hum behav", "nat rev neurol",
+    "nat rev neurosci", "nat commun", "nat aging", "nat methods",
+    "nat biomed eng", "nat mach intell",
+    # Flagship neurology / neuroscience
+    "lancet neurol", "neuron", "brain", "jama neurol", "ann neurol",
+    "trends cogn sci", "trends neurosci", "alzheimers dement",
+    "acta neuropathol", "sci transl med",
+}
+
+TIER2_JOURNALS = {
+    # Clinical neurology
+    "neurology", "neurol clin pract", "neurol genet",
+    "neurol neuroimmunol neuroinflamm", "alzheimers res ther",
+    "alzheimers dement (amst)", "alzheimers dement (n y)", "neurobiol aging",
+    "j headache pain", "cephalalgia", "headache", "j neurol neurosurg psychiatry",
+    "mov disord", "epilepsia", "stroke", "brain commun",
+    # Cognitive
+    "cognition", "j exp psychol gen", "cortex", "neuropsychologia",
+    "j cogn neurosci", "conscious cogn", "neurosci conscious", "elife",
+    "j neurosci", "cereb cortex", "psychol sci",
+    # Neuroimaging
+    "imaging neurosci", "neuroimage", "hum brain mapp", "neuroimage clin",
+    "magn reson med", "j magn reson imaging", "ieee trans med imaging",
+    "med image anal", "aperture neuro", "radiology",
+    # AI / ML
+    "npj digit med", "artif intell med", "neural netw",
+    "ieee trans neural netw learn syst", "j mach learn res",
+    "ieee trans pattern anal mach intell", "lancet digit health",
+}
+
+TIER1_WEIGHT = 0.25
+TIER2_WEIGHT = 0.12
+IN_ALLOWLIST_WEIGHT = 0.05   # in the category allowlist but not tier 1/2
+OFF_ALLOWLIST_WEIGHT = -0.10  # leaked in via the relaxed fallback
+PREPRINT_WEIGHT = -0.05       # not peer reviewed
+
+
+def _norm_journal(name):
+    """Normalize a journal abbreviation for tier lookup."""
+    if not name:
+        return ""
+    n = unicodedata.normalize("NFKC", name).lower().strip()
+    n = n.rstrip(".")
+    n = re.sub(r"\s+", " ", n)
+    return n
+
+
+def journal_tier_weight(paper, category_journals=None):
+    """Return the prestige weight for a paper based on its journal."""
+    source = paper.get("source", "")
+    if source in ("arXiv", "Biorxiv", "Medrxiv"):
+        return PREPRINT_WEIGHT
+    if source == "Scholar":
+        return 0.0  # unknown venue
+
+    abbrev = _norm_journal(paper.get("_journal_abbrev", ""))
+    if abbrev in TIER1_JOURNALS:
+        return TIER1_WEIGHT
+    if abbrev in TIER2_JOURNALS:
+        return TIER2_WEIGHT
+    if paper.get("_off_allowlist"):
+        return OFF_ALLOWLIST_WEIGHT
+    if category_journals and abbrev in {_norm_journal(j) for j in category_journals}:
+        return IN_ALLOWLIST_WEIGHT
+    return 0.0
+
+
+def journal_tier_label(paper):
+    """Human-readable tier for the email badge."""
+    abbrev = _norm_journal(paper.get("_journal_abbrev", ""))
+    if abbrev in TIER1_JOURNALS:
+        return "tier1"
+    if abbrev in TIER2_JOURNALS:
+        return "tier2"
+    if paper.get("_off_allowlist"):
+        return "off"
+    return ""
+
+
 # Refined categories with specific queries and target journals
 # Journal names use PubMed Title Abbreviation format for [ta] filtering
+# `journals`          -> strict allowlist (primary search)
+# `fallback_journals` -> broader curated list, used ONLY if the strict search
+#                        returns 0 results. Never falls back to all of PubMed.
 CATEGORIES = {
     "Cognitive Neuroscience": {
         "description": "Cognition, consciousness, neuropsychology & neurodegeneration",
@@ -88,6 +179,14 @@ CATEGORIES = {
             # Specialized
             "Neurosci Conscious", "Conscious Cogn", "Cortex",
             "Neuropsychologia", "J Cogn Neurosci",
+            # Flagship
+            "Nature", "Science", "Neuron", "Nat Neurosci", "Nat Commun",
+        ],
+        "fallback_journals": [
+            "eLife", "J Neurosci", "Cereb Cortex", "Psychol Sci",
+            "Brain Commun", "Sci Rep", "PLoS Biol", "Curr Biol",
+            "Neuropsychol Rev", "J Int Neuropsychol Soc", "Brain Cogn",
+            "Behav Brain Res", "Neurobiol Learn Mem",
         ],
         "queries": [
             "(cognitive function OR cognition) AND (neural OR brain) AND (memory OR attention OR executive)",
@@ -110,6 +209,15 @@ CATEGORIES = {
             "Neurobiol Aging", "Acta Neuropathol",
             # Headache
             "J Headache Pain", "Cephalalgia", "Headache",
+            # Flagship
+            "Lancet", "N Engl J Med", "JAMA", "BMJ", "Nat Med",
+            "Nat Rev Neurosci", "Sci Transl Med",
+        ],
+        "fallback_journals": [
+            "J Neurol Neurosurg Psychiatry", "Mov Disord", "Epilepsia",
+            "Stroke", "Brain Commun", "Eur J Neurol", "J Neurol",
+            "Parkinsonism Relat Disord", "Ther Adv Neurol Disord",
+            "Front Neurol", "Neurotherapeutics", "Lancet Reg Health Eur",
         ],
         "queries": [
             "(migraine OR headache OR cephalalgia) AND (guideline OR management OR treatment protocol)",
@@ -129,6 +237,14 @@ CATEGORIES = {
             # MRI physics & engineering
             "Magn Reson Med", "J Magn Reson Imaging",
             "IEEE Trans Med Imaging",
+            # Flagship
+            "Nat Methods", "Nat Neurosci", "Nat Commun", "Neuroimage",
+        ],
+        "fallback_journals": [
+            "Med Image Anal", "Radiology", "Brain Struct Funct",
+            "Netw Neurosci", "Front Neuroimaging", "MAGMA",
+            "NMR Biomed", "J Neurosci Methods", "Neuroinformatics",
+            "Sci Data", "Brain Connect",
         ],
         "queries": [
             "(fMRI analysis OR MRI preprocessing) AND (pipeline OR method OR tutorial)",
@@ -147,6 +263,13 @@ CATEGORIES = {
             # Theoretical / Modeling
             "Neural Netw", "IEEE Trans Neural Netw Learn Syst",
             "J Mach Learn Res", "Med Image Anal",
+            # Flagship
+            "Nat Mach Intell", "Nat Biomed Eng", "Nat Methods", "Nat Commun",
+        ],
+        "fallback_journals": [
+            "IEEE Trans Pattern Anal Mach Intell", "Lancet Digit Health",
+            "J Am Med Inform Assoc", "Comput Biol Med", "Brief Bioinform",
+            "IEEE J Biomed Health Inform", "Patterns (N Y)", "Sci Rep",
         ],
         "queries": [
             "(machine learning OR deep learning) AND (cognitive neuroscience OR neuroimaging)",
@@ -158,6 +281,24 @@ CATEGORIES = {
 }
 
 MAX_PAPERS_PER_CATEGORY = 16
+MIN_PAPERS_PER_CATEGORY = 5   # guaranteed floor before global ranking reallocates slots
+TOTAL_PAPER_BUDGET = 45       # global cap; best-ranked papers win the remaining slots
+
+# ---- Google Scholar quality gate ----
+# Scholar returns arbitrary venues. Only accept hits hosted on reputable
+# publisher / indexer domains. Set SCHOLAR_STRICT_DOMAINS = False to disable.
+SCHOLAR_STRICT_DOMAINS = True
+SCHOLAR_ALLOWED_DOMAINS = (
+    "nature.com", "science.org", "sciencemag.org", "cell.com",
+    "thelancet.com", "nejm.org", "jamanetwork.com", "bmj.com",
+    "sciencedirect.com", "link.springer.com", "onlinelibrary.wiley.com",
+    "academic.oup.com", "journals.plos.org", "elifesciences.org",
+    "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "ieeexplore.ieee.org",
+    "journals.sagepub.com", "tandfonline.com", "jneurosci.org",
+    "neurology.org", "alz-journals.onlinelibrary.wiley.com",
+    "thejns.org", "karger.com", "annualreviews.org", "pnas.org",
+    "jmlr.org", "mitpressjournals.org", "direct.mit.edu",
+)
 MAX_PREPRINTS_PER_CATEGORY = 3  # Max arXiv + bioRxiv papers per category
 MAX_DISCOVERY_PAPERS = 3        # Papers in the Weekly Discovery section
 
@@ -874,6 +1015,13 @@ def collect_discovery_papers(rejected_papers, sent_history, starred_papers, expl
 
     print(f"  Discovery found: {len(papers)} papers from {len(queries)} queries")
 
+    # Prefer higher-tier journals even in the wide-net discovery section
+    for paper in papers:
+        paper["_tier_weight"] = journal_tier_weight(paper)
+        paper["_tier"] = journal_tier_label(paper)
+        paper["_rank_score"] = paper["_tier_weight"]
+    papers.sort(key=lambda p: p["_rank_score"], reverse=True)
+
     return {
         "description": "Exploring adjacent neuroscience frontiers",
         "papers": papers[:MAX_DISCOVERY_PAPERS]
@@ -883,12 +1031,19 @@ def collect_discovery_papers(rejected_papers, sent_history, starred_papers, expl
 # ============== DATA SOURCES ==============
 
 @_retry()
-def search_pubmed(query, max_results=5, filter_journals=True, journals=None, category_name=None):
-    """Search PubMed with optional journal filtering.
+def search_pubmed(query, max_results=5, filter_journals=True, journals=None,
+                  fallback_journals=None, category_name=None, _is_fallback=False):
+    """Search PubMed with tiered journal filtering.
+
+    Strategy:
+      1. Search the strict `journals` allowlist.
+      2. If 0 results, retry against the broader `fallback_journals` list and
+         tag those papers with `_off_allowlist` so they can be down-weighted.
+      3. If still 0, return [] — we never fall back to unfiltered PubMed.
 
     Args:
-        journals: list of PubMed journal abbreviations to filter by.
-                  If None and filter_journals=True, searches without filter.
+        journals: strict allowlist of PubMed journal abbreviations.
+        fallback_journals: broader curated list used only on empty results.
         category_name: optional category label for log messages.
     """
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -916,10 +1071,15 @@ def search_pubmed(query, max_results=5, filter_journals=True, journals=None, cat
     ids = resp.json().get("esearchresult", {}).get("idlist", [])
 
     if not ids:
-        if filter_journals and journals:
-            cat_label = f" [{category_name}]" if category_name else ""
-            print(f"  ⚠ [Journal fallback]{cat_label} 0 results with journal filter â†' falling back to unfiltered. Query: {query[:80]}")
-            return search_pubmed(query, max_results, filter_journals=False, category_name=category_name)
+        cat_label = f" [{category_name}]" if category_name else ""
+        if filter_journals and journals and fallback_journals and not _is_fallback:
+            print(f"  ⚠ [Journal fallback]{cat_label} 0 results in strict allowlist "
+                  f"→ retrying against broader tier-2 list. Query: {query[:70]}")
+            return search_pubmed(query, max_results, filter_journals=True,
+                                 journals=fallback_journals,
+                                 category_name=category_name, _is_fallback=True)
+        if _is_fallback:
+            print(f"  ⚠ [Journal fallback]{cat_label} 0 results in fallback list too — skipping query.")
         return []
 
     fetch_url = f"{base_url}/efetch.fcgi"
@@ -936,11 +1096,12 @@ def search_pubmed(query, max_results=5, filter_journals=True, journals=None, cat
         title_el = article.find(".//ArticleTitle")
         pmid_el = article.find(".//PMID")
         journal_el = article.find(".//Journal/Title")
-        abstract_el = article.find(".//Abstract/AbstractText")
+        abbrev_el = article.find(".//Journal/ISOAbbreviation")
 
         if title_el is not None and pmid_el is not None:
             title_text = "".join(title_el.itertext()) if title_el.text is None else title_el.text
             journal = journal_el.text if journal_el is not None else "PubMed"
+            journal_abbrev = abbrev_el.text if abbrev_el is not None else journal
 
             # Collect all abstract parts (some have multiple AbstractText elements)
             abstract_parts = []
@@ -954,7 +1115,9 @@ def search_pubmed(query, max_results=5, filter_journals=True, journals=None, cat
                 "title": title_text or "No title",
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid_el.text}/",
                 "source": journal[:30],
-                "abstract": abstract
+                "abstract": abstract,
+                "_journal_abbrev": journal_abbrev or "",
+                "_off_allowlist": _is_fallback,
             })
     return papers
 
@@ -1034,7 +1197,93 @@ def search_biorxiv(query, max_results=5):
     return papers
 
 
+@_retry()
+def search_google_scholar(query, max_results=3):
+    """Search Google Scholar via SerpAPI (optional - set SERPAPI_KEY)."""
+    api_key = os.getenv("SERPAPI_KEY")
+    if not api_key:
+        return []
+
+    url = "https://serpapi.com/search"
+    params = {
+        "engine": "google_scholar",
+        "q": query,
+        "api_key": api_key,
+        "num": max_results,
+        "as_ylo": datetime.now().year,
+        "scisbd": 1
+    }
+
+    resp = requests.get(url, params=params, timeout=15)
+    data = resp.json()
+
+    # Known preprint domains to exclude
+    _PREPRINT_DOMAINS = ("arxiv.org", "biorxiv.org", "medrxiv.org",
+                         "ssrn.com", "preprints.org", "researchsquare.com",
+                         "chemrxiv.org", "osf.io/preprints")
+
+    papers = []
+    for result in data.get("organic_results", []):
+        link = result.get("link", "")
+        link_l = link.lower()
+
+        # Skip preprints — they are already covered (and capped) by dedicated sources
+        if any(domain in link_l for domain in _PREPRINT_DOMAINS):
+            print(f"    [Scholar] Skipped preprint: {link}")
+            continue
+
+        # Quality gate: only reputable publisher/indexer domains
+        if SCHOLAR_STRICT_DOMAINS and not any(d in link_l for d in SCHOLAR_ALLOWED_DOMAINS):
+            print(f"    [Scholar] Skipped off-domain venue: {link[:70]}")
+            continue
+
+        papers.append({
+            "title": result.get("title", "No title"),
+            "url": link,
+            "source": "Scholar",
+            "abstract": result.get("snippet", "")
+        })
+    return papers
+
+
 # ============== NEWSLETTER BUILDER ==============
+
+def _apply_global_budget(newsletter):
+    """Allocate TOTAL_PAPER_BUDGET slots across categories by global rank.
+
+    Every category first gets up to MIN_PAPERS_PER_CATEGORY of its own best
+    papers. The remaining budget is then filled from a single pool sorted by
+    `_rank_score`, so strong papers in one track can outrank weak papers in
+    another. Order within each section is preserved (best first).
+    """
+    kept = {}
+    pool = []
+
+    # 1. Guaranteed floor per category
+    for cat, data in newsletter.items():
+        papers = data["papers"]
+        kept[cat] = papers[:MIN_PAPERS_PER_CATEGORY]
+        for p in papers[MIN_PAPERS_PER_CATEGORY:]:
+            pool.append((cat, p))
+
+    used = sum(len(v) for v in kept.values())
+    remaining = max(0, TOTAL_PAPER_BUDGET - used)
+
+    # 2. Fill remaining slots from the global pool, best-ranked first
+    pool.sort(key=lambda cp: cp[1].get("_rank_score", 0.0), reverse=True)
+    for cat, paper in pool[:remaining]:
+        if len(kept[cat]) < MAX_PAPERS_PER_CATEGORY:
+            kept[cat].append(paper)
+
+    # 3. Re-sort each section by rank and write back
+    for cat in newsletter:
+        section = sorted(kept[cat], key=lambda p: p.get("_rank_score", 0.0), reverse=True)
+        newsletter[cat]["papers"] = section
+
+    total = sum(len(v["papers"]) for v in newsletter.values())
+    dist = ", ".join(f"{c.split()[0]}:{len(d['papers'])}" for c, d in newsletter.items())
+    print(f"\n  Global budget: {total}/{TOTAL_PAPER_BUDGET} slots — {dist}")
+
 
 def collect_papers(feedback_data=None):
     """Collect papers for all categories, filtering rejected and already-sent ones.
@@ -1072,6 +1321,7 @@ def collect_papers(feedback_data=None):
         seen_titles = set()  # Within-category dedup (uses title_lower)
         preprint_count = 0  # Track arXiv + bioRxiv papers in this category
         category_journals = config.get("journals", [])
+        category_fallback = config.get("fallback_journals", [])
 
         for query in config["queries"]:
             refined = refine_query(query, negative_kw)
@@ -1080,7 +1330,9 @@ def collect_papers(feedback_data=None):
             else:
                 print(f"  Query: {query[:50]}...")
 
-            for paper in search_pubmed(refined, 8, journals=category_journals, category_name=category):
+            for paper in search_pubmed(refined, 5, journals=category_journals,
+                                       fallback_journals=category_fallback,
+                                       category_name=category):
                 title_lower = paper["title"].lower()
                 norm = _normalize_title(paper["title"])
                 if title_lower in seen_titles:
@@ -1140,53 +1392,46 @@ def collect_papers(feedback_data=None):
                 global_seen_titles.add(norm)
                 preprint_count += 1
 
+            for paper in search_google_scholar(query, 3):
+                title_lower = paper["title"].lower()
+                norm = _normalize_title(paper["title"])
+                if title_lower in seen_titles:
+                    continue
+                if norm in global_seen_titles:
+                    cross_dedup_count += 1
+                    continue
+                if norm in sent_history:
+                    dedup_count += 1
+                    continue
+                if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
+                    rejected_count += 1
+                    continue
+                papers.append(paper)
+                seen_titles.add(title_lower)
+                global_seen_titles.add(norm)
+
         if preprint_count:
             print(f"  Preprints included: {preprint_count}/{MAX_PREPRINTS_PER_CATEGORY}")
 
-        # --- Backfill: if under target, re-query PubMed with more results & no journal filter ---
-        if len(papers) < MAX_PAPERS_PER_CATEGORY:
-            deficit = MAX_PAPERS_PER_CATEGORY - len(papers)
-            print(f"  Backfill: {len(papers)}/{MAX_PAPERS_PER_CATEGORY} papers — fetching up to {deficit} more...")
-            for query in config["queries"]:
-                if len(papers) >= MAX_PAPERS_PER_CATEGORY:
-                    break
-                refined = refine_query(query, negative_kw)
-                for paper in search_pubmed(refined, max_results=15, filter_journals=False,
-                                           category_name=category):
-                    if len(papers) >= MAX_PAPERS_PER_CATEGORY:
-                        break
-                    title_lower = paper["title"].lower()
-                    norm = _normalize_title(paper["title"])
-                    if title_lower in seen_titles:
-                        continue
-                    if norm in global_seen_titles:
-                        cross_dedup_count += 1
-                        continue
-                    if norm in sent_history:
-                        dedup_count += 1
-                        continue
-                    if is_rejected(paper["title"], paper.get("abstract", ""), rejected_papers):
-                        rejected_count += 1
-                        continue
-                    papers.append(paper)
-                    seen_titles.add(title_lower)
-                    global_seen_titles.add(norm)
-            if len(papers) > MAX_PAPERS_PER_CATEGORY - deficit:
-                print(f"  Backfill added {len(papers) - (MAX_PAPERS_PER_CATEGORY - deficit)} papers")
+        # Score papers: semantic relevance (starred) + journal prestige tier
+        for paper in papers:
+            star = calculate_star_score(
+                paper["title"], paper.get("abstract", ""), starred_papers
+            ) if starred_papers else 0.0
+            tier_w = journal_tier_weight(paper, category_journals)
+            paper["_star_score"] = star
+            paper["_tier_weight"] = tier_w
+            paper["_tier"] = journal_tier_label(paper)
+            paper["_rank_score"] = star + tier_w
 
-        # Score papers by similarity to starred papers and sort
-        if starred_papers and papers:
-            for paper in papers:
-                paper["_star_score"] = calculate_star_score(
-                    paper["title"], paper.get("abstract", ""), starred_papers
-                )
-            papers.sort(key=lambda p: p["_star_score"], reverse=True)
+        papers.sort(key=lambda p: p["_rank_score"], reverse=True)
 
-            # Log boosted papers
-            boosted = [p for p in papers if p["_star_score"] >= STAR_BOOST_THRESHOLD]
-            if boosted:
-                print(f"  â˜… {len(boosted)} papers boosted by star similarity")
+        n_t1 = sum(1 for p in papers if p.get("_tier") == "tier1")
+        n_off = sum(1 for p in papers if p.get("_tier") == "off")
+        boosted = [p for p in papers if p["_star_score"] >= STAR_BOOST_THRESHOLD]
+        print(f"  Ranking: {n_t1} tier-1 | {len(boosted)} star-boosted | {n_off} off-allowlist")
 
+        # Cap per category, but truncation happens globally below
         newsletter[category] = {
             "description": config["description"],
             "papers": papers[:MAX_PAPERS_PER_CATEGORY]
@@ -1200,6 +1445,13 @@ def collect_papers(feedback_data=None):
     if cross_dedup_count:
         print(f"  Skipped {cross_dedup_count} cross-category duplicates")
 
+    # ---- Global cross-category ranking ----
+    # Each category keeps a guaranteed floor; the remaining slots in the global
+    # budget go to the highest-ranked papers regardless of which section they
+    # came from. A Nature paper in one track can now displace a weak paper
+    # in another instead of both getting a fixed 16 slots.
+    _apply_global_budget(newsletter)
+
     # Add Weekly Discovery (serendipity) section
     discovery = collect_discovery_papers(rejected_papers, sent_history, starred_papers, explored_paths, global_seen_titles)
     if discovery["papers"]:
@@ -1212,12 +1464,19 @@ def collect_papers(feedback_data=None):
         if p.get("_star_score", 0) >= STAR_BOOST_THRESHOLD
     )
 
+    tier1_count = sum(1 for d in newsletter.values() for p in d["papers"]
+                      if p.get("_tier") == "tier1")
+    off_count = sum(1 for d in newsletter.values() for p in d["papers"]
+                    if p.get("_tier") == "off")
+
     stats = {
         "total_papers": total_papers,
         "rejected_filtered": rejected_count,
         "dedup_skipped": dedup_count,
         "cross_dedup_skipped": cross_dedup_count,
         "star_boosted": star_boosted,
+        "tier1": tier1_count,
+        "off_allowlist": off_count,
     }
 
     return newsletter, stats
@@ -1244,6 +1503,11 @@ def format_newsletter(newsletter, stats=None):
             .star-link { color: #f39c12; font-size: 12px; text-decoration: none; margin-left: 6px; cursor: pointer; }
             .star-link:hover { text-decoration: underline; }
             .abstract { color: #555; font-size: 13px; line-height: 1.5; margin-top: 8px; padding: 8px 10px; background: #f9f9fb; border-radius: 4px; }
+            .tier { font-size: 10px; font-weight: 700; letter-spacing: .5px; padding: 3px 8px; border-radius: 10px; margin-left: 6px; display: inline-block; }
+            .tier1 { background: #27ae60; color: #fff; }
+            .tier2 { background: #d5e8f7; color: #2471a3; }
+            .tieroff { background: #fdebd0; color: #b9770e; }
+            .tierpre { background: #eaecee; color: #7f8c8d; }
             .empty { color: #bdc3c7; font-style: italic; padding: 15px; }
             .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ecf0f1; color: #95a5a6; font-size: 11px; }
         </style>
@@ -1299,6 +1563,19 @@ def format_newsletter(newsletter, stats=None):
                     pct = int(star_score * 100)
                     star_badge = f' <span style="color:#f39c12; font-size:11px;" title="Similar to your starred papers ({pct}% match)">&#x2B50;</span>'
 
+                # Journal tier badge
+                tier = paper.get("_tier", "")
+                if tier == "tier1":
+                    tier_badge = '<span class="tier tier1">TIER 1</span>'
+                elif tier == "tier2":
+                    tier_badge = '<span class="tier tier2">TIER 2</span>'
+                elif tier == "off":
+                    tier_badge = '<span class="tier tieroff">&#x26A0; OFF-ALLOWLIST</span>'
+                elif paper.get("source") in ("arXiv", "Biorxiv", "Medrxiv"):
+                    tier_badge = '<span class="tier tierpre">PREPRINT</span>'
+                else:
+                    tier_badge = ""
+
                 # Abstract summary (2-3 sentences)
                 summary = _summarize_abstract(paper.get("abstract", ""))
                 summary_html = f'<p class="abstract">{summary}</p>' if summary else ""
@@ -1308,7 +1585,7 @@ def format_newsletter(newsletter, stats=None):
                     <span style="color:#3498db; font-weight:bold; margin-right:8px;">{i}.</span>
                     <a class="title-link" href="{paper['url']}" target="_blank">{paper['title']}</a>{star_badge}
                     {summary_html}
-                    <span class="source">&#x1F50E; {paper['source']}</span>
+                    <span class="source">&#x1F50E; {paper['source']}</span>{tier_badge}
                     <a class="star-link" href="{star_url}" target="_blank" title="Star this paper â€” similar papers will be prioritized">[&#x2605; Star]</a>
                     <a class="reject-link" href="{reject_url}" target="_blank" title="Reject â€” similar papers will be filtered out">[Reject]</a>
                 </div>
@@ -1327,12 +1604,16 @@ def format_newsletter(newsletter, stats=None):
             parts.append(f"{dedup_total} deduplicated")
         if stats.get("star_boosted"):
             parts.append(f"{stats['star_boosted']} star-boosted")
+        if stats.get("tier1"):
+            parts.append(f"{stats['tier1']} tier-1")
+        if stats.get("off_allowlist"):
+            parts.append(f"{stats['off_allowlist']} off-allowlist")
         stats_html = f'<p style="margin-top:8px;">{" &bull; ".join(parts)}</p>'
 
     html += f"""
         <div class="footer">
             <p>Generated by Neuroscience Newsletter Agent<br>
-            Sources: PubMed, arXiv, bioRxiv, medRxiv<br>
+            Sources: PubMed, arXiv, bioRxiv, medRxiv, Google Scholar<br>
             <em>[&#x2605; Star] = more like this &bull; [Reject] = less like this &mdash; just press "Submit" on the GitHub Issue</em></p>
             {stats_html}
         </div>
