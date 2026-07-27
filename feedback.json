@@ -551,6 +551,10 @@
     {
       "title": "Revealing Mammographic Phenotypes in Deep Learning Breast Cancer Risk Models",
       "abstract": "Mammogram-based deep learning models have improved breast cancer risk prediction, but the learned imaging patterns remain underexplored. Existing interpretability methods rely on single-image saliency maps, failing to identify recurring mammographic phenotypes across large patient cohorts. By clustering patch embeddings from a pre-trained model, Mirai, we isolate recurring phenotypes linked to 5-year cancer risk. Analyses show risk-increasing phenotypes capture complex structures (e.g., dense tissue, microcalcifications) and shortcut artifacts (e.g., clips). These phenotypes correlate strongly with older age and higher BI-RADS density. Our framework connects tissue patterns to AI risk scores, revealing clinical signatures and potential latent model confounders."
+    },
+    {
+      "title": "Vitamin D Promotes Neuronal Survival via Nrf2 Upregulation in D-Galactose–Induced Mice: An In-Vivo and In-Silico Study",
+      "abstract": "4 days ago - … , neuroinflammation, and neurodegeneration. Chronic D-… learning, working memory, and recognition memory, … , and frank hippocampal neurodegeneration, as revealed by …"
     }
   ],
   "starred_papers": [
@@ -2283,45 +2287,6 @@
     "morphinet: a graph subdivision network for adaptive bi-ventricle surface reconstruction"
   ],
   "explored_paths": [
-    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
-    "(gut-brain axis OR microbiome) AND (neurodegeneration OR cognition)",
-    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
-    "(connectomics OR brain graph theory) AND (method OR analysis)",
-    "(trigeminal autonomic cephalalgias) AND (pathophysiology OR treatment)",
-    "(medication overuse) AND (headache OR chronic pain)",
-    "(default mode network) AND (cognitive function OR aging)",
-    "(ecological validity) AND (cognitive assessment OR neuropsychology)",
-    "(TDP-43 OR C9orf72) AND (therapy OR clinical trial)",
-    "(federated learning) AND (brain OR neuroimaging OR clinical)",
-    "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
-    "(vision transformer) AND (medical imaging OR brain)",
-    "(language network OR semantic memory) AND (neurodegeneration)",
-    "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
-    "(alpha-synuclein) AND (biomarker OR therapy OR progression)",
-    "(embodied cognition OR sensorimotor) AND (brain OR neural)",
-    "(brain-computer interface) AND (cognition OR neural decoding)",
-    "(novel PET tracer) AND (brain OR tau OR synaptic)",
-    "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
-    "(graph neural network) AND (brain OR connectome)",
-    "(real-time fMRI OR neurofeedback) AND (clinical OR therapy)",
-    "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
-    "(bilingualism OR cognitive reserve) AND (dementia OR aging brain)",
-    "(retinal imaging OR eye biomarker) AND (Alzheimer OR neurodegeneration)",
-    "(cortical spreading depression) AND (aura OR mechanism)",
-    "(radiomics) AND (brain OR neuroimaging)",
-    "(CGRP OR calcitonin gene) AND (mechanism OR novel therapy)",
-    "(air pollution OR environmental exposure) AND (neurodegeneration)",
-    "(simultaneous PET-MRI) AND (neuroimaging OR method)",
-    "(sleep disruption OR circadian rhythm) AND (neurodegeneration OR amyloid)",
-    "(deep brain stimulation) AND (Parkinson OR tremor) AND (advance OR novel)",
-    "(explainable AI OR interpretability) AND (neuroimaging OR brain)",
-    "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
-    "(adult neurogenesis) AND (hippocampus OR memory)",
-    "(generative model OR diffusion model) AND (brain OR neuroimaging)",
-    "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
-    "(self-supervised learning) AND (neuroimaging OR EEG)",
-    "(trigeminovascular) AND (pain OR sensitization)",
-    "(foundation model OR large language model) AND (neuroscience OR brain)",
-    "(digital neuropsychology OR computerized testing) AND (cognition)"
+    "(brain-computer interface) AND (cognition OR neural decoding)"
   ]
 }
