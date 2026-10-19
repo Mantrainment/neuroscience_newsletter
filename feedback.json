@@ -2764,17 +2764,18 @@
   ],
   "explored_paths": [
     "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
+    "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
     "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
+    "(connectomics OR brain graph theory) AND (method OR analysis)",
     "(brain-computer interface) AND (cognition OR neural decoding)",
+    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
     "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
-    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
     "(default mode network) AND (cognitive function OR aging)",
     "(adult neurogenesis) AND (hippocampus OR memory)",
-    "(radiomics) AND (brain OR neuroimaging)",
     "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
-    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
     "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
-    "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
-    "(embodied cognition OR sensorimotor) AND (brain OR neural)"
+    "(embodied cognition OR sensorimotor) AND (brain OR neural)",
+    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
+    "(radiomics) AND (brain OR neuroimaging)"
   ]
 }
