@@ -2763,21 +2763,22 @@
     "vaccine literacy among italian travelers: a web-based survey using a brief assessment tool"
   ],
   "explored_paths": [
-    "(connectomics OR brain graph theory) AND (method OR analysis)",
-    "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
-    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
-    "(adult neurogenesis) AND (hippocampus OR memory)",
-    "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
-    "(ecological validity) AND (cognitive assessment OR neuropsychology)",
-    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
-    "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
-    "(radiomics) AND (brain OR neuroimaging)",
-    "(embodied cognition OR sensorimotor) AND (brain OR neural)",
-    "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
+    "(bilingualism OR cognitive reserve) AND (dementia OR aging brain)",
     "(brain-computer interface) AND (cognition OR neural decoding)",
-    "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
+    "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
+    "(adult neurogenesis) AND (hippocampus OR memory)",
     "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
     "(default mode network) AND (cognitive function OR aging)",
-    "(air pollution OR environmental exposure) AND (neurodegeneration)"
+    "(connectomics OR brain graph theory) AND (method OR analysis)",
+    "(air pollution OR environmental exposure) AND (neurodegeneration)",
+    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
+    "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
+    "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
+    "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
+    "(ecological validity) AND (cognitive assessment OR neuropsychology)",
+    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
+    "(embodied cognition OR sensorimotor) AND (brain OR neural)",
+    "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
+    "(radiomics) AND (brain OR neuroimaging)"
   ]
 }
