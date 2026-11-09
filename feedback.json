@@ -2763,22 +2763,23 @@
     "vaccine literacy among italian travelers: a web-based survey using a brief assessment tool"
   ],
   "explored_paths": [
-    "(bilingualism OR cognitive reserve) AND (dementia OR aging brain)",
-    "(brain-computer interface) AND (cognition OR neural decoding)",
-    "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
-    "(adult neurogenesis) AND (hippocampus OR memory)",
-    "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
-    "(default mode network) AND (cognitive function OR aging)",
-    "(connectomics OR brain graph theory) AND (method OR analysis)",
-    "(air pollution OR environmental exposure) AND (neurodegeneration)",
-    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
     "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
     "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
+    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
+    "(air pollution OR environmental exposure) AND (neurodegeneration)",
+    "(bilingualism OR cognitive reserve) AND (dementia OR aging brain)",
+    "(connectomics OR brain graph theory) AND (method OR analysis)",
     "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
     "(ecological validity) AND (cognitive assessment OR neuropsychology)",
-    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
+    "(radiomics) AND (brain OR neuroimaging)",
+    "(adult neurogenesis) AND (hippocampus OR memory)",
+    "(default mode network) AND (cognitive function OR aging)",
+    "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
+    "(brain-computer interface) AND (cognition OR neural decoding)",
+    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
+    "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
     "(embodied cognition OR sensorimotor) AND (brain OR neural)",
     "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
-    "(radiomics) AND (brain OR neuroimaging)"
+    "(TDP-43 OR C9orf72) AND (therapy OR clinical trial)"
   ]
 }
