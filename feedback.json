@@ -2763,23 +2763,24 @@
     "vaccine literacy among italian travelers: a web-based survey using a brief assessment tool"
   ],
   "explored_paths": [
-    "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
     "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
-    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
-    "(air pollution OR environmental exposure) AND (neurodegeneration)",
     "(bilingualism OR cognitive reserve) AND (dementia OR aging brain)",
-    "(connectomics OR brain graph theory) AND (method OR analysis)",
-    "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
-    "(ecological validity) AND (cognitive assessment OR neuropsychology)",
-    "(radiomics) AND (brain OR neuroimaging)",
-    "(adult neurogenesis) AND (hippocampus OR memory)",
-    "(default mode network) AND (cognitive function OR aging)",
-    "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
-    "(brain-computer interface) AND (cognition OR neural decoding)",
     "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
+    "(generative model OR diffusion model) AND (brain OR neuroimaging)",
+    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
+    "(radiomics) AND (brain OR neuroimaging)",
     "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
+    "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
+    "(TDP-43 OR C9orf72) AND (therapy OR clinical trial)",
+    "(adult neurogenesis) AND (hippocampus OR memory)",
+    "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
     "(embodied cognition OR sensorimotor) AND (brain OR neural)",
+    "(brain-computer interface) AND (cognition OR neural decoding)",
+    "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
+    "(default mode network) AND (cognitive function OR aging)",
     "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
-    "(TDP-43 OR C9orf72) AND (therapy OR clinical trial)"
+    "(connectomics OR brain graph theory) AND (method OR analysis)",
+    "(ecological validity) AND (cognitive assessment OR neuropsychology)",
+    "(air pollution OR environmental exposure) AND (neurodegeneration)"
   ]
 }
