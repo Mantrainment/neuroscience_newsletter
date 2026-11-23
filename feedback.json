@@ -2763,24 +2763,26 @@
     "vaccine literacy among italian travelers: a web-based survey using a brief assessment tool"
   ],
   "explored_paths": [
-    "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
+    "(air pollution OR environmental exposure) AND (neurodegeneration)",
     "(bilingualism OR cognitive reserve) AND (dementia OR aging brain)",
-    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
-    "(generative model OR diffusion model) AND (brain OR neuroimaging)",
-    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
     "(radiomics) AND (brain OR neuroimaging)",
+    "(harmonization OR multi-site) AND (neuroimaging OR MRI)",
+    "(ultra-high field OR 7T MRI) AND (brain OR clinical)",
+    "(brain plasticity OR neuroplasticity) AND (training OR rehabilitation)",
+    "(deep brain stimulation) AND (Parkinson OR tremor) AND (advance OR novel)",
+    "(generative model OR diffusion model) AND (brain OR neuroimaging)",
     "(hippocampal replay OR memory consolidation) AND (sleep OR offline)",
-    "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
-    "(TDP-43 OR C9orf72) AND (therapy OR clinical trial)",
     "(adult neurogenesis) AND (hippocampus OR memory)",
-    "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
-    "(embodied cognition OR sensorimotor) AND (brain OR neural)",
     "(brain-computer interface) AND (cognition OR neural decoding)",
-    "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
+    "(embodied cognition OR sensorimotor) AND (brain OR neural)",
+    "(TDP-43 OR C9orf72) AND (therapy OR clinical trial)",
     "(default mode network) AND (cognitive function OR aging)",
+    "(multimodal imaging) AND (EEG-fMRI OR PET-MRI)",
     "(spatial navigation OR grid cells) AND (aging OR neurodegeneration)",
+    "(synthetic MRI OR quantitative MRI) AND (brain OR method)",
     "(connectomics OR brain graph theory) AND (method OR analysis)",
-    "(ecological validity) AND (cognitive assessment OR neuropsychology)",
-    "(air pollution OR environmental exposure) AND (neurodegeneration)"
+    "(trigeminal autonomic cephalalgias) AND (pathophysiology OR treatment)",
+    "(neural oscillations OR brain rhythms) AND (cognition OR memory)",
+    "(ecological validity) AND (cognitive assessment OR neuropsychology)"
   ]
 }
